@@ -1,20 +1,24 @@
 /* ============================================================
-   BASEPLATE MULTIPLAYER RELAY v2 — Durable Object world room
+   BASEPLATE MULTIPLAYER RELAY v3 — Durable Object world room
    ------------------------------------------------------------
    This is the code for the worker at:
      robloxmultiplayer.kadharri-minecraft.workers.dev
 
-   WHY v2?  The old version kept the player list in a plain
-   Worker variable. Cloudflare runs many copies of a plain
-   Worker in parallel (one per edge machine), so two players
-   could each get connected ("online") yet be sitting in two
-   DIFFERENT copies of the list — invisible to each other.
+   WHY v3?  v2 relayed only player state ('s') and chat ('c').
+   The game now also sends WORLD events ('w') so the merry-go-
+   round, the tree swing, zombies, sword/gun hits between players
+   and the day/night time follow on EVERY screen. The relay is
+   dumb by design — it just passes each message to everyone else
+   in the room, so any NEW world feature added to the game flows
+   through automatically (that is what makes the sync generic).
 
-   THE FIX: a Durable Object ("MyDurableObject"). A Durable Object
-   is ONE single global instance with a fixed name — every
-   player, from any device, anywhere in the world, is routed to
-   the exact same object. Everyone who opens the game file is
-   guaranteed to land in the same world room.
+   WHY a Durable Object at all?  A plain Worker variable lives in
+   ONE edge machine — two players could each get "connected" yet
+   sit in two different copies of the list, invisible to each
+   other. The Durable Object ("MyDurableObject") is ONE single
+   global instance — every player, from any device, anywhere, is
+   routed to the exact same room. Everyone who opens the game
+   file lands in the same world.
 
    The game file connects automatically to  wss://<worker>/ws ,
    so once this code is deployed, every player who opens the
@@ -43,11 +47,14 @@
      of the game file. The Durable Object room holds every open
      WebSocket and relays what each player sends to everyone
      else:
-       - player state (position / yaw / animation / tool) at 12 Hz
-       - player chat
+       - 's' player state (position / yaw / animation / tool) 12 Hz
+       - 'c' player chat
+       - 'w' WORLD events: rides, zombies, hits, day/night —
+         any kind of world feature the game invents later
        - join / leave notifications (silent in-game)
-     The result: everybody renders everybody else in the same
-     world. Nothing is stored — it is a pure real-time relay.
+     The result: everybody renders everybody else — and the
+     rides/zombies/day all follow — in the same world. Nothing
+     is stored; it is a pure real-time relay.
 
    LIMITS (fine for a group of friends):
      - MAX 40 concurrent players, messages capped at 1 KB,
@@ -144,7 +151,7 @@ export class MyDurableObject {
 
       if (m.t === 'p') { try { server.send('{"t":"q"}'); } catch (e) {} return; }  // keepalive ping
 
-      if (m.t === 's' || m.t === 'c') {     // player state / chat → pass through
+      if (m.t === 's' || m.t === 'c' || m.t === 'w') {  // state / chat / world event → pass through
         if (typeof m.id === 'string' && m.id.length <= 64) id = m.id;     // remember who this socket is
         for (const ws of this.clients) {
           if (ws === server || ws.readyState !== 1) continue;
