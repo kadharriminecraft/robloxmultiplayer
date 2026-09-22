@@ -14,7 +14,7 @@
 		"bindings": [
 			{
 				"class_name": "MyDurableObject",
-				"name": "MY_DURABLE_OBJECT"
+				"name": "ROOM"
 			}
 		]
 	},
