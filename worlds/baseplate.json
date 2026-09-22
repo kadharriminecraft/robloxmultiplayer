@@ -1,0 +1,7 @@
+{
+  "id": "baseplate",
+  "name": "Baseplate World",
+  "desc": "The classic template — flat plate with a house, watchtower, tree swing, merry-go-round and a zombie button.",
+  "kind": "template",
+  "spawn": { "x": 0, "z": 0 }
+}
