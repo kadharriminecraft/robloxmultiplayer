@@ -36,18 +36,28 @@
    in the legacy baseplate room and simply ignore the new
    'gp' / 'forceworld' message types.
 
-   DEPLOY (GitHub repo — recommended):
-     1. Your repo entry file (the one wrangler builds) should be
-        this file's contents. Paste/replace it.
-     2. Copy the whole  worlds/  folder next to it:
-            worlds/index.js
-            worlds/baseplate.json
-            worlds/island-world.json
-            worlds/WORLDS-SPEC.md
-        ("next to it" = the import below is './worlds/index.js' —
-         if your entry lives in src/, put worlds/ in src/ or fix
-         that one import path.)
-     3. Commit + push — Workers Builds deploys on merge.
+   DEPLOY (your GitHub repo — kadharriminecraft/robloxmultiplayer):
+     Your repo's actual layout (what the import below assumes):
+         src/index.ts          ← the entry wrangler builds (wrangler.json "main")
+         worlds/index.js       ← the world registry (repo ROOT, next to src/)
+         worlds/<world>.json   ← the world files
+     1. src/index.ts = this file's contents, pasted over it.
+        The import near the bottom is '../worlds/index.js' — one folder
+        UP, out of src/, to the root worlds/ folder. THE PATH MATTERS:
+        it must point FROM the entry file TO the worlds folder.
+        './worlds/index.js' would look for src/worlds/ — the build
+        fails with "Could not resolve './worlds/index.js'" and the
+        LAST good deploy keeps serving (exactly what happened on
+        2026-09-23).
+     2. Commit + push to main — Workers Builds redeploys on merge
+        (about a minute).
+     3. Verify the deploy: open
+            https://robloxmultiplayer.kadharri-minecraft.workers.dev/
+        It must say "Baseplate multiplayer relay v5 is live" and
+        "Worlds served: 2 (GET /api/worlds)". If a push does NOT
+        change that page, the build failed — check the worker's
+        Builds / Deployments tab in the Cloudflare dashboard for the
+        red error line (it names the file it couldn't resolve).
      No wrangler.toml changes are needed: the registry is just
      another instance of the SAME MyDurableObject class (room
      name '__registry__'), and .json imports work out of the box.
@@ -69,7 +79,12 @@
                             (no param → legacy baseplate room)
    ============================================================ */
 
-import { WORLD_LIST } from './worlds/index.js';
+/* '../worlds/index.js' — the entry file (src/index.ts) sits one folder
+   BELOW the repo-root worlds/ folder, so the path goes UP one level.
+   If you ever move the entry or the worlds folder, this import must
+   still point from the entry file to worlds/index.js or the deploy
+   build fails. */
+import { WORLD_LIST } from '../worlds/index.js';
 
 const MAX_CLIENTS = 40;
 const REGISTRY_NAME = '__registry__';
