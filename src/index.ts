@@ -1,11 +1,26 @@
 /* ============================================================
-   BASEPLATE MULTIPLAYER RELAY v5 — worlds + global presence
+   BASEPLATE MULTIPLAYER RELAY v6 — worlds + game-state persistence
    ------------------------------------------------------------
    This is the code for the worker at:
      robloxmultiplayer.kadharri-minecraft.workers.dev
 
+   WHY v6?  v5 gave every world its own room and stored room rules.
+   v14 of the game turned world files into full GAMES (tycoons with
+   buy buttons, claimed plots, taken pickups — see
+   worlds/WORLDS-SPEC.md). v6 stores that game state too:
+
+     - 'w' events of kind 'tyc' (buy / claim / pickup / win) update
+       a compact  gstate  map in the Durable Object's storage, so a
+       world's progress SURVIVES the room going empty and every
+       joiner catches up instantly.
+     - a 'tyc' {t:'r'} (admin "Reset world progress") clears it.
+     - new sockets are handed the stored state as a direct 'tycs'
+       message right alongside the stored room rules.
+     - the per-message size cap went 1024 → 4096 so chunked
+       snapshots from clients fit.
+
    WHY v5?  v4 relayed one room ('baseplate-world') and stored
-   its room rules. v5 adds WORLDS:
+   its room rules. v5 added WORLDS:
 
      - The game asks  GET /api/worlds        for the world list
        and            GET /api/worlds/<id>   for a world recipe
@@ -53,7 +68,7 @@
         (about a minute).
      3. Verify the deploy: open
             https://robloxmultiplayer.kadharri-minecraft.workers.dev/
-        It must say "Baseplate multiplayer relay v5 is live" and
+        It must say "Baseplate multiplayer relay v6 is live" and
         "Worlds served: 2 (GET /api/worlds)". If a push does NOT
         change that page, the build failed — check the worker's
         Builds / Deployments tab in the Cloudflare dashboard for the
@@ -140,7 +155,7 @@ export default {
           '  ' + (meta[w] || w) + ' — ' + byWorld[w].length + ' player' +
           (byWorld[w].length === 1 ? '' : 's') + ': ' + byWorld[w].join(', '));
         return new Response(
-          'Baseplate multiplayer relay v5 is live — ' + (j.players || []).length +
+          'Baseplate multiplayer relay v6 is live — ' + (j.players || []).length +
           ' player(s) connected\nWorlds served: ' + WORLD_LIST.length +
           ' (GET /api/worlds)\n' + (lines.length ? lines.join('\n') + '\n' : ''),
           { status: 200, headers: { 'content-type': 'text/plain; charset=utf-8' } });
@@ -298,12 +313,18 @@ export class MyDurableObject {
         try { server.send(JSON.stringify({ t: 'rrules', d: rules })); } catch (e) {}
       }
     }).catch(() => {});
+    /* v6: the world's game progress (claimed plots, bought buttons) */
+    this.state.storage.get('gstate').then(gs => {
+      if (gs && server.readyState === 1) {
+        try { server.send(JSON.stringify({ t: 'tycs', d: gs })); } catch (e) {}
+      }
+    }).catch(() => {});
 
     let id = null;                          // bound from the first state message
     let msgs = 0, winStart = Date.now();
 
     server.addEventListener('message', ev => {
-      if (typeof ev.data !== 'string' || ev.data.length > 1024) return;   // size cap
+      if (typeof ev.data !== 'string' || ev.data.length > 4096) return;   // size cap (v6: room for chunked snapshots)
       const now = Date.now();
       if (now - winStart > 1000) { winStart = now; msgs = 0; }             // rate cap
       if (++msgs > 90) return;
@@ -345,6 +366,11 @@ export class MyDurableObject {
         }
         if (m.t === 'w' && m.k === 'rrules' && m.d && typeof m.d === 'object' && !Array.isArray(m.d))
           this.state.storage.put('rules', m.d).catch(() => {});   // v4: remember for joiners
+        /* v6: world GAME state — buys, claims, taken pickups (tyc
+           events from the v14 game logic, §9.7). Stored so tycoon
+           progress survives an empty room; joiners get it below. */
+        if (m.t === 'w' && m.k === 'tyc' && m.d && typeof m.d === 'object')
+          this._gameApply(m.d, id).catch(() => {});
         for (const ws of this.clients) {
           if (ws === server || ws.readyState !== 1) continue;
           try { ws.send(ev.data); } catch (e) {}
@@ -364,6 +390,28 @@ export class MyDurableObject {
     server.addEventListener('error', bye);
 
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  /* ---- v6: the world GAME-state reducer --------------------
+     Compact map, capped so a runaway world can't bloat storage:
+       b  { buttonId: 1 }        bn { buttonId: buyCount }
+       c  { plotId: {i, n} }     pk { pickupId: 1 }
+     'tyc' {t:'r'} from an admin resets everything. */
+  async _gameApply(d, from) {
+    if (!d || typeof d !== 'object') return;
+    if (d.t === 'r') { await this.state.storage.delete('gstate').catch(() => {}); return; }
+    if (d.t !== 'b' && d.t !== 'c' && d.t !== 'pk') return;
+    let g = await this.state.storage.get('gstate').catch(() => null);
+    if (!g || typeof g !== 'object') g = { b: {}, bn: {}, c: {}, pk: {} };
+    if (!g.b) g.b = {}; if (!g.bn) g.bn = {}; if (!g.c) g.c = {}; if (!g.pk) g.pk = {};
+    if (d.t === 'b') { g.b[d.e] = 1; g.bn[d.e] = (g.bn[d.e] || 0) + 1; }
+    else if (d.t === 'c') g.c[d.e] = { i: String(from || '').slice(0, 64), n: String(d.n || 'Player').slice(0, 20) };
+    else if (d.t === 'pk') g.pk[d.e] = 1;
+    if (Object.keys(g.b).length > 400) g.b = Object.fromEntries(Object.entries(g.b).slice(-400));
+    if (Object.keys(g.bn).length > 400) g.bn = Object.fromEntries(Object.entries(g.bn).slice(-400));
+    if (Object.keys(g.c).length > 60) g.c = Object.fromEntries(Object.entries(g.c).slice(-60));
+    if (Object.keys(g.pk).length > 300) g.pk = Object.fromEntries(Object.entries(g.pk).slice(-300));
+    await this.state.storage.put('gstate', g).catch(() => {});
   }
 
   /* ---- room: tell the registry exactly who is here ----
