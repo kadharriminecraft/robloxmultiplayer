@@ -1,7 +1,7 @@
 {
   "id": "island-world",
   "name": "Island World",
-  "desc": "A low, flat grass island with a campfire and logs, surrounded by a dirt ring and sand beach.",
+  "desc": "A large elevated grass island — a dirt ring around the edges steps down through the sand into the ocean.",
   "kind": "terrain",
   "spawn": { "x": 0, "z": 0 },
   "sky": {
@@ -12,18 +12,18 @@
     "size": [176, 176],
     "seed": 20260922,
     "waterLevel": 10,
-    "base": 15,
+    "base": 30,
     "oceanFloor": 3,
     "noise": [
-      { "scale": 64, "amp": 0.0 },
-      { "scale": 21, "amp": 0.0 },
-      { "scale": 9, "amp": 0.0 }
+      { "scale": 64, "amp": 5.0 },
+      { "scale": 21, "amp": 1.8 },
+      { "scale": 9, "amp": 0.7 }
     ],
     "island": { "radius": 62, "edge": 26, "rim": 0.55 },
     "surface": {
       "default": "grass",
       "edge": { "block": "dirt", "below": 0.85 },
-      "beach": { "block": "sand", "below": 13 },
+      "beach": { "block": "sand", "below": 12 },
       "underwater": { "block": "sand" }
     },
     "palette": {
@@ -33,14 +33,11 @@
       "stone": "#8d9298",
       "water": "#2f7fbf",
       "leaves": "#3f8f3f",
-      "trunk": "#6b4a2b",
-      "log": "#6b4a2b",
-      "fire": "#e25822"
+      "trunk": "#6b4a2b"
     }
   },
   "scatter": [
-    { "type": "rock", "per": 600, "on": "grass", "min": 0.5 },
-    { "type": "campfire", "per": 1000, "on": "grass", "min": 0, "scale": [0.5, 0.8] },
-    { "type": "log", "per": 500, "on": "grass", "min": 0, "scale": [0.8, 1.2] }
+    { "type": "tree", "per": 240, "on": "grass", "min": 0.6, "scale": [0.8, 1.3] },
+    { "type": "rock", "per": 600, "on": "grass", "min": 0.5 }
   ]
 }
