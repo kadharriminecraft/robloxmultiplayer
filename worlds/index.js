@@ -1,10 +1,11 @@
 /* ============================================================
-   WORLDS INDEX — the worker's world registry (v5).
+   WORLDS INDEX — the worker's world registry (v6).
    ------------------------------------------------------------
    Add a world:
      1. Drop  my-world.json  into this folder (follow the recipe
         schema in WORLDS-SPEC.md — start from a copy of
-        island-world.json).
+        island-world.json for a place, tycoon-world.json for a
+        full game with logic, weapons and shops).
      2. Add ONE line below:
           import myWorld from './my-world.json';
         and list it in WORLD_LIST.
@@ -20,8 +21,10 @@
 
 import baseplate from './baseplate.json';
 import islandWorld from './island-world.json';
+import tycoonWorld from './tycoon-world.json';
 
 export const WORLD_LIST = [
   baseplate,
-  islandWorld
+  islandWorld,
+  tycoonWorld
 ];
