@@ -1,16 +1,21 @@
 /* ============================================================
-   BASEPLATE MULTIPLAYER RELAY v3 — Durable Object world room
+   BASEPLATE MULTIPLAYER RELAY v4 — Durable Object world room
    ------------------------------------------------------------
    This is the code for the worker at:
      robloxmultiplayer.kadharri-minecraft.workers.dev
 
-   WHY v3?  v2 relayed only player state ('s') and chat ('c').
-   The game now also sends WORLD events ('w') so the merry-go-
-   round, the tree swing, zombies, sword/gun hits between players
-   and the day/night time follow on EVERY screen. The relay is
-   dumb by design — it just passes each message to everyone else
-   in the room, so any NEW world feature added to the game flows
-   through automatically (that is what makes the sync generic).
+   WHY v4?  v3 relayed player state, chat and world events but
+   remembered NOTHING — so room rules (gravity, damage, zoom
+   limits, smite tuning... set from the game's admin Rules tab)
+   only lived on the screens that were online when they were set.
+   v4 stores the latest 'rrules' payload in Durable Object storage
+   and hands it to every socket the moment it joins, so the rules
+   apply to WHOEVER JOINS LATER — even if the room was empty when
+   they were set. (The game also has a fallback: any admin online
+   re-announces the rules when somebody joins.) The relay stays
+   dumb — it just passes each message to everyone else in the
+   room, so any NEW world feature still flows through
+   automatically.
 
    WHY a Durable Object at all?  A plain Worker variable lives in
    ONE edge machine — two players could each get "connected" yet
@@ -47,14 +52,16 @@
      of the game file. The Durable Object room holds every open
      WebSocket and relays what each player sends to everyone
      else:
-       - 's' player state (position / yaw / animation / tool) 12 Hz
+       - 's' player state (position / yaw / animation / tool / size) 12 Hz
        - 'c' player chat
-       - 'w' WORLD events: rides, zombies, hits, day/night —
-         any kind of world feature the game invents later
+       - 'w' WORLD events: rides, zombies, hits, day/night, room
+         rules ('rrules') — any kind of world feature the game
+         invents later (room rules are also STORED, see below)
        - join / leave notifications (silent in-game)
      The result: everybody renders everybody else — and the
-     rides/zombies/day all follow — in the same world. Nothing
-     is stored; it is a pure real-time relay.
+     rides/zombies/day all follow — in the same world. Only the
+     room rules are stored; everything else stays a pure
+     real-time relay.
 
    LIMITS (fine for a group of friends):
      - MAX 40 concurrent players, messages capped at 1 KB,
@@ -137,6 +144,17 @@ export class MyDurableObject {
     server.accept();
     this.clients.add(server);
 
+    /* v4: hand the new socket the stored room rules (if any) so
+       the world's gravity / damage / zoom / smite tuning apply to
+       whoever joins — even if nobody was online when they were
+       set. Sent as a direct 'rrules' message (t:'w' relay events
+       from other players arrive separately, as before). */
+    this.state.storage.get('rules').then(rules => {
+      if (rules && server.readyState === 1) {
+        try { server.send(JSON.stringify({ t: 'rrules', d: rules })); } catch (e) {}
+      }
+    }).catch(() => {});
+
     let id = null;                          // bound from the first state message
     let msgs = 0, winStart = Date.now();
 
@@ -153,6 +171,8 @@ export class MyDurableObject {
 
       if (m.t === 's' || m.t === 'c' || m.t === 'w') {  // state / chat / world event → pass through
         if (typeof m.id === 'string' && m.id.length <= 64) id = m.id;     // remember who this socket is
+        if (m.t === 'w' && m.k === 'rrules' && m.d && typeof m.d === 'object' && !Array.isArray(m.d))
+          this.state.storage.put('rules', m.d).catch(() => {});           // v4: remember for joiners
         for (const ws of this.clients) {
           if (ws === server || ws.readyState !== 1) continue;
           try { ws.send(ev.data); } catch (e) {}
