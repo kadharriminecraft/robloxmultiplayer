@@ -1,0 +1,2335 @@
+{
+  "id": "gold-rush-tycoon",
+  "name": "Gold Rush Tycoon",
+  "desc": "A full tycoon — claim one of 4 plots, buy droppers, conveyors and upgrades, defend against night zombies, buy custom swords & guns, and race to $25,000.",
+  "kind": "terrain",
+  "spawn": {
+    "x": 0,
+    "z": 4
+  },
+  "sky": {
+    "dayTop": "#69b7e8",
+    "dayBottom": "#e8f4fb"
+  },
+  "terrain": {
+    "size": [
+      176,
+      176
+    ],
+    "seed": 777333,
+    "waterLevel": 0,
+    "base": 10,
+    "oceanFloor": 8,
+    "noise": [
+      {
+        "scale": 100,
+        "amp": 1.4
+      },
+      {
+        "scale": 30,
+        "amp": 0.5
+      }
+    ],
+    "surface": {
+      "default": "grass"
+    },
+    "palette": {
+      "grass": "#63a854",
+      "dirt": "#8a5f3b",
+      "sand": "#e0d29a",
+      "stone": "#8d9298"
+    }
+  },
+  "scatter": [
+    {
+      "type": "tree",
+      "per": 900,
+      "on": "grass",
+      "min": 0,
+      "scale": [
+        0.7,
+        1.0
+      ]
+    }
+  ],
+  "items": [
+    {
+      "id": "steel-sword",
+      "name": "Steel Sword",
+      "icon": "sword",
+      "kind": "sword",
+      "stats": {
+        "damage": 12,
+        "pvp": 18,
+        "range": 5.6,
+        "cooldown": 0.38,
+        "kb": 18
+      },
+      "mesh": {
+        "blade": "#c8d2da",
+        "guard": "#7a828c",
+        "grip": "#3a3f46",
+        "len": 2.6
+      }
+    },
+    {
+      "id": "scatter-blaster",
+      "name": "Scatter Blaster",
+      "icon": "crosshair",
+      "kind": "gun",
+      "stats": {
+        "damage": 7,
+        "pvp": 8,
+        "cooldown": 0.9,
+        "range": 90,
+        "spread": 7,
+        "pellets": 6,
+        "ammo": 24,
+        "reload": 2.2,
+        "auto": false,
+        "kb": 26
+      },
+      "mesh": {
+        "body": "#4a3a2a",
+        "accent": "#c4281c",
+        "len": 0.8
+      }
+    },
+    {
+      "id": "void-blade",
+      "name": "Void Blade",
+      "icon": "swords",
+      "kind": "sword",
+      "stats": {
+        "damage": 35,
+        "pvp": 40,
+        "range": 6.4,
+        "cooldown": 0.3,
+        "kb": 30
+      },
+      "mesh": {
+        "blade": "#8a5cff",
+        "guard": "#2a1f4a",
+        "grip": "#1a1428",
+        "len": 3.2,
+        "glow": 0.85
+      }
+    },
+    {
+      "id": "ray-gun",
+      "name": "Ray Gun",
+      "icon": "zap",
+      "kind": "gun",
+      "stats": {
+        "damage": 30,
+        "pvp": 26,
+        "cooldown": 0.16,
+        "range": 260,
+        "spread": 1.5,
+        "ammo": 60,
+        "reload": 2.8,
+        "auto": true,
+        "kb": 14,
+        "tracer": "#6dffa8",
+        "flash": 1.4
+      },
+      "mesh": {
+        "body": "#1e2b26",
+        "accent": "#39d353",
+        "len": 1.5,
+        "glow": 0.7
+      }
+    },
+    {
+      "id": "golden-apple",
+      "name": "Golden Apple",
+      "icon": "apple",
+      "kind": "consumable",
+      "stats": {
+        "heal": 60
+      },
+      "mesh": {
+        "color": "#f5c542",
+        "size": 1.1
+      }
+    }
+  ],
+  "economy": {
+    "name": "Gold",
+    "symbol": "$",
+    "icon": "coins",
+    "start": 100,
+    "goal": 25000
+  },
+  "build": [
+    {
+      "id": "plaza-plate",
+      "pos": [
+        0,
+        "ground",
+        0
+      ],
+      "size": [
+        26,
+        0.5,
+        26
+      ],
+      "color": "#8d9298",
+      "material": "plastic",
+      "lift": -0.05,
+      "noCollide": true
+    },
+    {
+      "id": "plaza-post",
+      "pos": [
+        0,
+        "ground",
+        -9
+      ],
+      "size": [
+        0.6,
+        4.2,
+        0.6
+      ],
+      "color": "#624732",
+      "material": "wood"
+    },
+    {
+      "id": "stall-floor",
+      "pos": [
+        12,
+        "ground",
+        0
+      ],
+      "size": [
+        10,
+        0.6,
+        10
+      ],
+      "color": "#7a5230",
+      "material": "wood"
+    },
+    {
+      "id": "stall-post-a",
+      "pos": [
+        16.5,
+        "ground",
+        -4
+      ],
+      "size": [
+        0.7,
+        8,
+        0.7
+      ],
+      "color": "#624732",
+      "material": "wood"
+    },
+    {
+      "id": "stall-post-b",
+      "pos": [
+        16.5,
+        "ground",
+        4
+      ],
+      "size": [
+        0.7,
+        8,
+        0.7
+      ],
+      "color": "#624732",
+      "material": "wood"
+    },
+    {
+      "id": "stall-roof",
+      "pos": [
+        12,
+        "ground",
+        0
+      ],
+      "size": [
+        12,
+        0.6,
+        12
+      ],
+      "color": "#c4281c",
+      "lift": 8.2
+    },
+    {
+      "id": "stall-light",
+      "pos": [
+        12,
+        "ground",
+        0
+      ],
+      "size": [
+        1.2,
+        1.2,
+        1.2
+      ],
+      "color": "#ffd27a",
+      "material": "neon",
+      "lift": 7.2,
+      "noCollide": true
+    },
+    {
+      "id": "ne-floor",
+      "pos": [
+        34,
+        "ground",
+        -34
+      ],
+      "size": [
+        30,
+        0.6,
+        22
+      ],
+      "color": "#6d7075",
+      "material": "plastic",
+      "requires": [
+        "plot-ne"
+      ]
+    },
+    {
+      "id": "ne-wall-back",
+      "pos": [
+        34,
+        "ground",
+        -45
+      ],
+      "size": [
+        30,
+        4,
+        1
+      ],
+      "color": "#6d7075",
+      "requires": [
+        "plot-ne"
+      ]
+    },
+    {
+      "id": "ne-wall-left",
+      "pos": [
+        49,
+        "ground",
+        -34
+      ],
+      "size": [
+        1,
+        4,
+        22
+      ],
+      "color": "#6d7075",
+      "requires": [
+        "plot-ne"
+      ]
+    },
+    {
+      "id": "ne-wall-right",
+      "pos": [
+        19,
+        "ground",
+        -34
+      ],
+      "size": [
+        1,
+        4,
+        22
+      ],
+      "color": "#6d7075",
+      "requires": [
+        "plot-ne"
+      ]
+    },
+    {
+      "id": "ne-lamp-a",
+      "pos": [
+        48,
+        "ground",
+        -44
+      ],
+      "size": [
+        0.8,
+        0.8,
+        0.8
+      ],
+      "color": "#f5c542",
+      "material": "neon",
+      "lift": 4.6,
+      "requires": [
+        "plot-ne"
+      ],
+      "noCollide": true
+    },
+    {
+      "id": "ne-lamp-b",
+      "pos": [
+        20,
+        "ground",
+        -44
+      ],
+      "size": [
+        0.8,
+        0.8,
+        0.8
+      ],
+      "color": "#f5c542",
+      "material": "neon",
+      "lift": 4.6,
+      "requires": [
+        "plot-ne"
+      ],
+      "noCollide": true
+    },
+    {
+      "id": "ne-trim-back",
+      "pos": [
+        34,
+        "ground",
+        -44.4
+      ],
+      "size": [
+        30.8,
+        1.0,
+        0.4
+      ],
+      "color": "#f5c542",
+      "material": "metal",
+      "lift": 3.4,
+      "requires": [
+        "ne-b-walls"
+      ],
+      "noCollide": true
+    },
+    {
+      "id": "ne-trim-front",
+      "pos": [
+        34,
+        "ground",
+        -23.6
+      ],
+      "size": [
+        30.8,
+        1.0,
+        0.4
+      ],
+      "color": "#f5c542",
+      "material": "metal",
+      "lift": 3.4,
+      "requires": [
+        "ne-b-walls"
+      ],
+      "noCollide": true
+    },
+    {
+      "id": "ne-statue",
+      "pos": [
+        45,
+        "ground",
+        -42
+      ],
+      "size": [
+        2.2,
+        6,
+        2.2
+      ],
+      "color": "#f5c542",
+      "material": "metal",
+      "lift": 0.3,
+      "requires": [
+        "ne-b-diamond"
+      ]
+    },
+    {
+      "id": "nw-floor",
+      "pos": [
+        -34,
+        "ground",
+        -34
+      ],
+      "size": [
+        30,
+        0.6,
+        22
+      ],
+      "color": "#4B974B",
+      "material": "plastic",
+      "requires": [
+        "plot-nw"
+      ]
+    },
+    {
+      "id": "nw-wall-back",
+      "pos": [
+        -34,
+        "ground",
+        -45
+      ],
+      "size": [
+        30,
+        4,
+        1
+      ],
+      "color": "#4B974B",
+      "requires": [
+        "plot-nw"
+      ]
+    },
+    {
+      "id": "nw-wall-left",
+      "pos": [
+        -49,
+        "ground",
+        -34
+      ],
+      "size": [
+        1,
+        4,
+        22
+      ],
+      "color": "#4B974B",
+      "requires": [
+        "plot-nw"
+      ]
+    },
+    {
+      "id": "nw-wall-right",
+      "pos": [
+        -19,
+        "ground",
+        -34
+      ],
+      "size": [
+        1,
+        4,
+        22
+      ],
+      "color": "#4B974B",
+      "requires": [
+        "plot-nw"
+      ]
+    },
+    {
+      "id": "nw-lamp-a",
+      "pos": [
+        -48,
+        "ground",
+        -44
+      ],
+      "size": [
+        0.8,
+        0.8,
+        0.8
+      ],
+      "color": "#9fd8ff",
+      "material": "neon",
+      "lift": 4.6,
+      "requires": [
+        "plot-nw"
+      ],
+      "noCollide": true
+    },
+    {
+      "id": "nw-lamp-b",
+      "pos": [
+        -20,
+        "ground",
+        -44
+      ],
+      "size": [
+        0.8,
+        0.8,
+        0.8
+      ],
+      "color": "#9fd8ff",
+      "material": "neon",
+      "lift": 4.6,
+      "requires": [
+        "plot-nw"
+      ],
+      "noCollide": true
+    },
+    {
+      "id": "nw-trim-back",
+      "pos": [
+        -34,
+        "ground",
+        -44.4
+      ],
+      "size": [
+        30.8,
+        1.0,
+        0.4
+      ],
+      "color": "#f5c542",
+      "material": "metal",
+      "lift": 3.4,
+      "requires": [
+        "nw-b-walls"
+      ],
+      "noCollide": true
+    },
+    {
+      "id": "nw-trim-front",
+      "pos": [
+        -34,
+        "ground",
+        -23.6
+      ],
+      "size": [
+        30.8,
+        1.0,
+        0.4
+      ],
+      "color": "#f5c542",
+      "material": "metal",
+      "lift": 3.4,
+      "requires": [
+        "nw-b-walls"
+      ],
+      "noCollide": true
+    },
+    {
+      "id": "nw-statue",
+      "pos": [
+        -45,
+        "ground",
+        -42
+      ],
+      "size": [
+        2.2,
+        6,
+        2.2
+      ],
+      "color": "#f5c542",
+      "material": "metal",
+      "lift": 0.3,
+      "requires": [
+        "nw-b-diamond"
+      ]
+    },
+    {
+      "id": "sw-floor",
+      "pos": [
+        -34,
+        "ground",
+        34
+      ],
+      "size": [
+        30,
+        0.6,
+        22
+      ],
+      "color": "#0D69AC",
+      "material": "plastic",
+      "requires": [
+        "plot-sw"
+      ]
+    },
+    {
+      "id": "sw-wall-back",
+      "pos": [
+        -34,
+        "ground",
+        45
+      ],
+      "size": [
+        30,
+        4,
+        1
+      ],
+      "color": "#0D69AC",
+      "requires": [
+        "plot-sw"
+      ]
+    },
+    {
+      "id": "sw-wall-left",
+      "pos": [
+        -49,
+        "ground",
+        34
+      ],
+      "size": [
+        1,
+        4,
+        22
+      ],
+      "color": "#0D69AC",
+      "requires": [
+        "plot-sw"
+      ]
+    },
+    {
+      "id": "sw-wall-right",
+      "pos": [
+        -19,
+        "ground",
+        34
+      ],
+      "size": [
+        1,
+        4,
+        22
+      ],
+      "color": "#0D69AC",
+      "requires": [
+        "plot-sw"
+      ]
+    },
+    {
+      "id": "sw-lamp-a",
+      "pos": [
+        -48,
+        "ground",
+        44
+      ],
+      "size": [
+        0.8,
+        0.8,
+        0.8
+      ],
+      "color": "#e8935a",
+      "material": "neon",
+      "lift": 4.6,
+      "requires": [
+        "plot-sw"
+      ],
+      "noCollide": true
+    },
+    {
+      "id": "sw-lamp-b",
+      "pos": [
+        -20,
+        "ground",
+        44
+      ],
+      "size": [
+        0.8,
+        0.8,
+        0.8
+      ],
+      "color": "#e8935a",
+      "material": "neon",
+      "lift": 4.6,
+      "requires": [
+        "plot-sw"
+      ],
+      "noCollide": true
+    },
+    {
+      "id": "sw-trim-back",
+      "pos": [
+        -34,
+        "ground",
+        44.4
+      ],
+      "size": [
+        30.8,
+        1.0,
+        0.4
+      ],
+      "color": "#f5c542",
+      "material": "metal",
+      "lift": 3.4,
+      "requires": [
+        "sw-b-walls"
+      ],
+      "noCollide": true
+    },
+    {
+      "id": "sw-trim-front",
+      "pos": [
+        -34,
+        "ground",
+        23.6
+      ],
+      "size": [
+        30.8,
+        1.0,
+        0.4
+      ],
+      "color": "#f5c542",
+      "material": "metal",
+      "lift": 3.4,
+      "requires": [
+        "sw-b-walls"
+      ],
+      "noCollide": true
+    },
+    {
+      "id": "sw-statue",
+      "pos": [
+        -45,
+        "ground",
+        42
+      ],
+      "size": [
+        2.2,
+        6,
+        2.2
+      ],
+      "color": "#f5c542",
+      "material": "metal",
+      "lift": 0.3,
+      "requires": [
+        "sw-b-diamond"
+      ]
+    },
+    {
+      "id": "se-floor",
+      "pos": [
+        34,
+        "ground",
+        34
+      ],
+      "size": [
+        30,
+        0.6,
+        22
+      ],
+      "color": "#a05f35",
+      "material": "plastic",
+      "requires": [
+        "plot-se"
+      ]
+    },
+    {
+      "id": "se-wall-back",
+      "pos": [
+        34,
+        "ground",
+        45
+      ],
+      "size": [
+        30,
+        4,
+        1
+      ],
+      "color": "#a05f35",
+      "requires": [
+        "plot-se"
+      ]
+    },
+    {
+      "id": "se-wall-left",
+      "pos": [
+        49,
+        "ground",
+        34
+      ],
+      "size": [
+        1,
+        4,
+        22
+      ],
+      "color": "#a05f35",
+      "requires": [
+        "plot-se"
+      ]
+    },
+    {
+      "id": "se-wall-right",
+      "pos": [
+        19,
+        "ground",
+        34
+      ],
+      "size": [
+        1,
+        4,
+        22
+      ],
+      "color": "#a05f35",
+      "requires": [
+        "plot-se"
+      ]
+    },
+    {
+      "id": "se-lamp-a",
+      "pos": [
+        48,
+        "ground",
+        44
+      ],
+      "size": [
+        0.8,
+        0.8,
+        0.8
+      ],
+      "color": "#58e07a",
+      "material": "neon",
+      "lift": 4.6,
+      "requires": [
+        "plot-se"
+      ],
+      "noCollide": true
+    },
+    {
+      "id": "se-lamp-b",
+      "pos": [
+        20,
+        "ground",
+        44
+      ],
+      "size": [
+        0.8,
+        0.8,
+        0.8
+      ],
+      "color": "#58e07a",
+      "material": "neon",
+      "lift": 4.6,
+      "requires": [
+        "plot-se"
+      ],
+      "noCollide": true
+    },
+    {
+      "id": "se-trim-back",
+      "pos": [
+        34,
+        "ground",
+        44.4
+      ],
+      "size": [
+        30.8,
+        1.0,
+        0.4
+      ],
+      "color": "#f5c542",
+      "material": "metal",
+      "lift": 3.4,
+      "requires": [
+        "se-b-walls"
+      ],
+      "noCollide": true
+    },
+    {
+      "id": "se-trim-front",
+      "pos": [
+        34,
+        "ground",
+        23.6
+      ],
+      "size": [
+        30.8,
+        1.0,
+        0.4
+      ],
+      "color": "#f5c542",
+      "material": "metal",
+      "lift": 3.4,
+      "requires": [
+        "se-b-walls"
+      ],
+      "noCollide": true
+    },
+    {
+      "id": "se-statue",
+      "pos": [
+        45,
+        "ground",
+        42
+      ],
+      "size": [
+        2.2,
+        6,
+        2.2
+      ],
+      "color": "#f5c542",
+      "material": "metal",
+      "lift": 0.3,
+      "requires": [
+        "se-b-diamond"
+      ]
+    }
+  ],
+  "logic": [
+    {
+      "id": "sign-welcome",
+      "type": "sign",
+      "pos": [
+        0,
+        "ground",
+        -8.2
+      ],
+      "lines": [
+        "GOLD RUSH TYCOON",
+        "Claim a plot (walk through a blue doorway)",
+        "Buy buttons with E · Earn gold",
+        "Reach $25,000 to win!"
+      ],
+      "width": 13
+    },
+    {
+      "id": "sign-goal",
+      "type": "sign",
+      "pos": [
+        -9,
+        "ground",
+        6
+      ],
+      "lines": [
+        "THE GOAL",
+        "$25,000"
+      ],
+      "width": 9
+    },
+    {
+      "id": "npc-smith",
+      "type": "npc",
+      "pos": [
+        12,
+        "ground",
+        -1
+      ],
+      "rot": 180,
+      "name": "Smith the Weaponsmith",
+      "color": "#0D69AC",
+      "lines": [
+        "Welcome to my stall! Finest weapons this side of the void.",
+        "Zombies crawl out of the ground at NIGHT — arm yourself.",
+        "The Ray Gun? Full auto. Worth every gold coin."
+      ],
+      "shop": [
+        {
+          "item": "steel-sword",
+          "cost": 100
+        },
+        {
+          "item": "scatter-blaster",
+          "cost": 350
+        },
+        {
+          "item": "void-blade",
+          "cost": 1500
+        },
+        {
+          "item": "ray-gun",
+          "cost": 4000
+        },
+        {
+          "item": "golden-apple",
+          "cost": 50
+        }
+      ]
+    },
+    {
+      "id": "pickup-apple",
+      "type": "pickup",
+      "pos": [
+        -12,
+        "ground",
+        2
+      ],
+      "item": "apple",
+      "respawn": 30
+    },
+    {
+      "id": "pickup-steel",
+      "type": "pickup",
+      "pos": [
+        7,
+        "ground",
+        7
+      ],
+      "item": "steel-sword",
+      "respawn": 60
+    },
+    {
+      "id": "pad-speed",
+      "type": "pad",
+      "pos": [
+        -7,
+        "ground",
+        -6
+      ],
+      "effect": "speed",
+      "power": 2.0,
+      "dur": 8
+    },
+    {
+      "id": "pad-launch",
+      "type": "pad",
+      "pos": [
+        7,
+        "ground",
+        -6
+      ],
+      "effect": "launch",
+      "power": 78
+    },
+    {
+      "id": "checkpoint-plaza",
+      "type": "checkpoint",
+      "pos": [
+        0,
+        "ground",
+        12
+      ]
+    },
+    {
+      "id": "sign-danger",
+      "type": "sign",
+      "pos": [
+        56,
+        "ground",
+        -56
+      ],
+      "lines": [
+        "DANGER",
+        "ZOMBIE PITS"
+      ],
+      "width": 8
+    },
+    {
+      "id": "kill-east",
+      "type": "killbrick",
+      "pos": [
+        62,
+        "ground",
+        -62
+      ],
+      "size": [
+        8,
+        1.2,
+        8
+      ],
+      "damage": 1000
+    },
+    {
+      "id": "kill-west",
+      "type": "killbrick",
+      "pos": [
+        -62,
+        "ground",
+        62
+      ],
+      "size": [
+        8,
+        1.2,
+        8
+      ],
+      "damage": 1000
+    },
+    {
+      "id": "spawn-night-a",
+      "type": "spawner",
+      "pos": [
+        76,
+        "ground",
+        -76
+      ],
+      "every": 45,
+      "max": 5,
+      "night": true,
+      "reward": 15
+    },
+    {
+      "id": "spawn-night-b",
+      "type": "spawner",
+      "pos": [
+        -76,
+        "ground",
+        76
+      ],
+      "every": 45,
+      "max": 5,
+      "night": true,
+      "reward": 15
+    },
+    {
+      "id": "tp-ne",
+      "type": "teleport",
+      "pos": [
+        10,
+        "ground",
+        -10
+      ],
+      "to": [
+        52.2,
+        "ground",
+        -48.2
+      ],
+      "cooldown": 4
+    },
+    {
+      "id": "sign-tp-ne",
+      "type": "sign",
+      "pos": [
+        13.4,
+        "ground",
+        -13.4
+      ],
+      "lines": [
+        "NE PLOT"
+      ],
+      "width": 5
+    },
+    {
+      "id": "tp-nw",
+      "type": "teleport",
+      "pos": [
+        -10,
+        "ground",
+        -10
+      ],
+      "to": [
+        -52.2,
+        "ground",
+        -48.2
+      ],
+      "cooldown": 4
+    },
+    {
+      "id": "sign-tp-nw",
+      "type": "sign",
+      "pos": [
+        -13.4,
+        "ground",
+        -13.4
+      ],
+      "lines": [
+        "NW PLOT"
+      ],
+      "width": 5
+    },
+    {
+      "id": "tp-sw",
+      "type": "teleport",
+      "pos": [
+        -10,
+        "ground",
+        10
+      ],
+      "to": [
+        -52.2,
+        "ground",
+        48.2
+      ],
+      "cooldown": 4
+    },
+    {
+      "id": "sign-tp-sw",
+      "type": "sign",
+      "pos": [
+        -13.4,
+        "ground",
+        13.4
+      ],
+      "lines": [
+        "SW PLOT"
+      ],
+      "width": 5
+    },
+    {
+      "id": "tp-se",
+      "type": "teleport",
+      "pos": [
+        10,
+        "ground",
+        10
+      ],
+      "to": [
+        52.2,
+        "ground",
+        48.2
+      ],
+      "cooldown": 4
+    },
+    {
+      "id": "sign-tp-se",
+      "type": "sign",
+      "pos": [
+        13.4,
+        "ground",
+        13.4
+      ],
+      "lines": [
+        "SE PLOT"
+      ],
+      "width": 5
+    },
+    {
+      "id": "plot-ne",
+      "type": "claim",
+      "pos": [
+        34,
+        "ground",
+        -22.5
+      ],
+      "size": [
+        10,
+        7,
+        1
+      ],
+      "name": "NE PLOT"
+    },
+    {
+      "id": "ne-conv",
+      "type": "conveyor",
+      "pos": [
+        34,
+        "ground",
+        -32
+      ],
+      "size": [
+        20,
+        0.5,
+        4
+      ],
+      "dir": [
+        1,
+        0
+      ],
+      "speed": 6,
+      "requires": [
+        "plot-ne"
+      ]
+    },
+    {
+      "id": "ne-col",
+      "type": "collector",
+      "pos": [
+        46.5,
+        "ground",
+        -32
+      ],
+      "size": [
+        5,
+        8,
+        6
+      ],
+      "value": 5,
+      "plot": "plot-ne",
+      "requires": [
+        "plot-ne"
+      ]
+    },
+    {
+      "id": "ne-drop1",
+      "type": "dropper",
+      "pos": [
+        26,
+        "ground",
+        -32
+      ],
+      "every": 4,
+      "value": 5,
+      "plot": "plot-ne",
+      "requires": [
+        "plot-ne"
+      ],
+      "color": "#4a5568",
+      "drop": {
+        "color": "#f5c542",
+        "size": 0.95
+      }
+    },
+    {
+      "id": "sign-ne",
+      "type": "sign",
+      "pos": [
+        34,
+        "ground",
+        -44.2
+      ],
+      "lines": [
+        "NE PLOT",
+        "Gold Rush Mine Co."
+      ],
+      "width": 7
+    },
+    {
+      "id": "ne-cp",
+      "type": "checkpoint",
+      "pos": [
+        23,
+        "ground",
+        -26
+      ],
+      "requires": [
+        "plot-ne"
+      ]
+    },
+    {
+      "id": "ne-b-drop2",
+      "type": "button",
+      "pos": [
+        40,
+        "ground",
+        -26.5
+      ],
+      "label": "Dropper 2",
+      "cost": 150,
+      "plot": "plot-ne"
+    },
+    {
+      "id": "ne-b-drop3",
+      "type": "button",
+      "pos": [
+        36,
+        "ground",
+        -26.5
+      ],
+      "label": "Dropper 3",
+      "cost": 400,
+      "plot": "plot-ne"
+    },
+    {
+      "id": "ne-b-faster",
+      "type": "button",
+      "pos": [
+        32,
+        "ground",
+        -26.5
+      ],
+      "label": "Faster Drops",
+      "cost": 300,
+      "plot": "plot-ne",
+      "patch": {
+        "ne-drop1": {
+          "every": 2.5
+        }
+      }
+    },
+    {
+      "id": "ne-b-walls",
+      "type": "button",
+      "pos": [
+        28,
+        "ground",
+        -26.5
+      ],
+      "label": "Golden Trim",
+      "cost": 800,
+      "plot": "plot-ne"
+    },
+    {
+      "id": "ne-b-up2",
+      "type": "button",
+      "pos": [
+        40,
+        "ground",
+        -29.5
+      ],
+      "label": "Upgrade Drops x2",
+      "cost": 1500,
+      "plot": "plot-ne",
+      "incomeMult": 2
+    },
+    {
+      "id": "ne-b-up3",
+      "type": "button",
+      "pos": [
+        36,
+        "ground",
+        -29.5
+      ],
+      "label": "Upgrade Drops x3",
+      "cost": 3000,
+      "plot": "plot-ne",
+      "incomeMult": 3
+    },
+    {
+      "id": "ne-b-mega",
+      "type": "button",
+      "pos": [
+        32,
+        "ground",
+        -29.5
+      ],
+      "label": "MEGA Dropper",
+      "cost": 6000,
+      "plot": "plot-ne"
+    },
+    {
+      "id": "ne-b-diamond",
+      "type": "button",
+      "pos": [
+        28,
+        "ground",
+        -29.5
+      ],
+      "label": "Diamond Drops",
+      "cost": 12000,
+      "plot": "plot-ne",
+      "patch": {
+        "ne-drop1": {
+          "value": 12
+        }
+      }
+    },
+    {
+      "id": "ne-drop2",
+      "type": "dropper",
+      "pos": [
+        32,
+        "ground",
+        -32
+      ],
+      "every": 4,
+      "value": 5,
+      "plot": "plot-ne",
+      "requires": [
+        "ne-b-drop2"
+      ],
+      "color": "#4a5568",
+      "drop": {
+        "color": "#f5c542",
+        "size": 0.95
+      }
+    },
+    {
+      "id": "ne-drop3",
+      "type": "dropper",
+      "pos": [
+        38,
+        "ground",
+        -32
+      ],
+      "every": 4,
+      "value": 5,
+      "plot": "plot-ne",
+      "requires": [
+        "ne-b-drop3"
+      ],
+      "color": "#4a5568",
+      "drop": {
+        "color": "#f5c542",
+        "size": 0.95
+      }
+    },
+    {
+      "id": "ne-mega",
+      "type": "dropper",
+      "pos": [
+        34,
+        "ground",
+        -36
+      ],
+      "every": 3,
+      "value": 25,
+      "plot": "plot-ne",
+      "requires": [
+        "ne-b-mega"
+      ],
+      "color": "#2f3742",
+      "drop": {
+        "color": "#8a5cff",
+        "size": 1.3
+      }
+    },
+    {
+      "id": "plot-nw",
+      "type": "claim",
+      "pos": [
+        -34,
+        "ground",
+        -22.5
+      ],
+      "size": [
+        10,
+        7,
+        1
+      ],
+      "name": "NW PLOT"
+    },
+    {
+      "id": "nw-conv",
+      "type": "conveyor",
+      "pos": [
+        -34,
+        "ground",
+        -32
+      ],
+      "size": [
+        20,
+        0.5,
+        4
+      ],
+      "dir": [
+        -1,
+        0
+      ],
+      "speed": 6,
+      "requires": [
+        "plot-nw"
+      ]
+    },
+    {
+      "id": "nw-col",
+      "type": "collector",
+      "pos": [
+        -46.5,
+        "ground",
+        -32
+      ],
+      "size": [
+        5,
+        8,
+        6
+      ],
+      "value": 5,
+      "plot": "plot-nw",
+      "requires": [
+        "plot-nw"
+      ]
+    },
+    {
+      "id": "nw-drop1",
+      "type": "dropper",
+      "pos": [
+        -26,
+        "ground",
+        -32
+      ],
+      "every": 4,
+      "value": 5,
+      "plot": "plot-nw",
+      "requires": [
+        "plot-nw"
+      ],
+      "color": "#4a5568",
+      "drop": {
+        "color": "#f5c542",
+        "size": 0.95
+      }
+    },
+    {
+      "id": "sign-nw",
+      "type": "sign",
+      "pos": [
+        -34,
+        "ground",
+        -44.2
+      ],
+      "lines": [
+        "NW PLOT",
+        "Gold Rush Mine Co."
+      ],
+      "width": 7
+    },
+    {
+      "id": "nw-cp",
+      "type": "checkpoint",
+      "pos": [
+        -23,
+        "ground",
+        -26
+      ],
+      "requires": [
+        "plot-nw"
+      ]
+    },
+    {
+      "id": "nw-b-drop2",
+      "type": "button",
+      "pos": [
+        -40,
+        "ground",
+        -26.5
+      ],
+      "label": "Dropper 2",
+      "cost": 150,
+      "plot": "plot-nw"
+    },
+    {
+      "id": "nw-b-drop3",
+      "type": "button",
+      "pos": [
+        -36,
+        "ground",
+        -26.5
+      ],
+      "label": "Dropper 3",
+      "cost": 400,
+      "plot": "plot-nw"
+    },
+    {
+      "id": "nw-b-faster",
+      "type": "button",
+      "pos": [
+        -32,
+        "ground",
+        -26.5
+      ],
+      "label": "Faster Drops",
+      "cost": 300,
+      "plot": "plot-nw",
+      "patch": {
+        "nw-drop1": {
+          "every": 2.5
+        }
+      }
+    },
+    {
+      "id": "nw-b-walls",
+      "type": "button",
+      "pos": [
+        -28,
+        "ground",
+        -26.5
+      ],
+      "label": "Golden Trim",
+      "cost": 800,
+      "plot": "plot-nw"
+    },
+    {
+      "id": "nw-b-up2",
+      "type": "button",
+      "pos": [
+        -40,
+        "ground",
+        -29.5
+      ],
+      "label": "Upgrade Drops x2",
+      "cost": 1500,
+      "plot": "plot-nw",
+      "incomeMult": 2
+    },
+    {
+      "id": "nw-b-up3",
+      "type": "button",
+      "pos": [
+        -36,
+        "ground",
+        -29.5
+      ],
+      "label": "Upgrade Drops x3",
+      "cost": 3000,
+      "plot": "plot-nw",
+      "incomeMult": 3
+    },
+    {
+      "id": "nw-b-mega",
+      "type": "button",
+      "pos": [
+        -32,
+        "ground",
+        -29.5
+      ],
+      "label": "MEGA Dropper",
+      "cost": 6000,
+      "plot": "plot-nw"
+    },
+    {
+      "id": "nw-b-diamond",
+      "type": "button",
+      "pos": [
+        -28,
+        "ground",
+        -29.5
+      ],
+      "label": "Diamond Drops",
+      "cost": 12000,
+      "plot": "plot-nw",
+      "patch": {
+        "nw-drop1": {
+          "value": 12
+        }
+      }
+    },
+    {
+      "id": "nw-drop2",
+      "type": "dropper",
+      "pos": [
+        -32,
+        "ground",
+        -32
+      ],
+      "every": 4,
+      "value": 5,
+      "plot": "plot-nw",
+      "requires": [
+        "nw-b-drop2"
+      ],
+      "color": "#4a5568",
+      "drop": {
+        "color": "#f5c542",
+        "size": 0.95
+      }
+    },
+    {
+      "id": "nw-drop3",
+      "type": "dropper",
+      "pos": [
+        -38,
+        "ground",
+        -32
+      ],
+      "every": 4,
+      "value": 5,
+      "plot": "plot-nw",
+      "requires": [
+        "nw-b-drop3"
+      ],
+      "color": "#4a5568",
+      "drop": {
+        "color": "#f5c542",
+        "size": 0.95
+      }
+    },
+    {
+      "id": "nw-mega",
+      "type": "dropper",
+      "pos": [
+        -34,
+        "ground",
+        -36
+      ],
+      "every": 3,
+      "value": 25,
+      "plot": "plot-nw",
+      "requires": [
+        "nw-b-mega"
+      ],
+      "color": "#2f3742",
+      "drop": {
+        "color": "#8a5cff",
+        "size": 1.3
+      }
+    },
+    {
+      "id": "plot-sw",
+      "type": "claim",
+      "pos": [
+        -34,
+        "ground",
+        22.5
+      ],
+      "size": [
+        10,
+        7,
+        1
+      ],
+      "name": "SW PLOT"
+    },
+    {
+      "id": "sw-conv",
+      "type": "conveyor",
+      "pos": [
+        -34,
+        "ground",
+        32
+      ],
+      "size": [
+        20,
+        0.5,
+        4
+      ],
+      "dir": [
+        -1,
+        0
+      ],
+      "speed": 6,
+      "requires": [
+        "plot-sw"
+      ]
+    },
+    {
+      "id": "sw-col",
+      "type": "collector",
+      "pos": [
+        -46.5,
+        "ground",
+        32
+      ],
+      "size": [
+        5,
+        8,
+        6
+      ],
+      "value": 5,
+      "plot": "plot-sw",
+      "requires": [
+        "plot-sw"
+      ]
+    },
+    {
+      "id": "sw-drop1",
+      "type": "dropper",
+      "pos": [
+        -26,
+        "ground",
+        32
+      ],
+      "every": 4,
+      "value": 5,
+      "plot": "plot-sw",
+      "requires": [
+        "plot-sw"
+      ],
+      "color": "#4a5568",
+      "drop": {
+        "color": "#f5c542",
+        "size": 0.95
+      }
+    },
+    {
+      "id": "sign-sw",
+      "type": "sign",
+      "pos": [
+        -34,
+        "ground",
+        44.2
+      ],
+      "lines": [
+        "SW PLOT",
+        "Gold Rush Mine Co."
+      ],
+      "width": 7
+    },
+    {
+      "id": "sw-cp",
+      "type": "checkpoint",
+      "pos": [
+        -23,
+        "ground",
+        26
+      ],
+      "requires": [
+        "plot-sw"
+      ]
+    },
+    {
+      "id": "sw-b-drop2",
+      "type": "button",
+      "pos": [
+        -40,
+        "ground",
+        26.5
+      ],
+      "label": "Dropper 2",
+      "cost": 150,
+      "plot": "plot-sw"
+    },
+    {
+      "id": "sw-b-drop3",
+      "type": "button",
+      "pos": [
+        -36,
+        "ground",
+        26.5
+      ],
+      "label": "Dropper 3",
+      "cost": 400,
+      "plot": "plot-sw"
+    },
+    {
+      "id": "sw-b-faster",
+      "type": "button",
+      "pos": [
+        -32,
+        "ground",
+        26.5
+      ],
+      "label": "Faster Drops",
+      "cost": 300,
+      "plot": "plot-sw",
+      "patch": {
+        "sw-drop1": {
+          "every": 2.5
+        }
+      }
+    },
+    {
+      "id": "sw-b-walls",
+      "type": "button",
+      "pos": [
+        -28,
+        "ground",
+        26.5
+      ],
+      "label": "Golden Trim",
+      "cost": 800,
+      "plot": "plot-sw"
+    },
+    {
+      "id": "sw-b-up2",
+      "type": "button",
+      "pos": [
+        -40,
+        "ground",
+        29.5
+      ],
+      "label": "Upgrade Drops x2",
+      "cost": 1500,
+      "plot": "plot-sw",
+      "incomeMult": 2
+    },
+    {
+      "id": "sw-b-up3",
+      "type": "button",
+      "pos": [
+        -36,
+        "ground",
+        29.5
+      ],
+      "label": "Upgrade Drops x3",
+      "cost": 3000,
+      "plot": "plot-sw",
+      "incomeMult": 3
+    },
+    {
+      "id": "sw-b-mega",
+      "type": "button",
+      "pos": [
+        -32,
+        "ground",
+        29.5
+      ],
+      "label": "MEGA Dropper",
+      "cost": 6000,
+      "plot": "plot-sw"
+    },
+    {
+      "id": "sw-b-diamond",
+      "type": "button",
+      "pos": [
+        -28,
+        "ground",
+        29.5
+      ],
+      "label": "Diamond Drops",
+      "cost": 12000,
+      "plot": "plot-sw",
+      "patch": {
+        "sw-drop1": {
+          "value": 12
+        }
+      }
+    },
+    {
+      "id": "sw-drop2",
+      "type": "dropper",
+      "pos": [
+        -32,
+        "ground",
+        32
+      ],
+      "every": 4,
+      "value": 5,
+      "plot": "plot-sw",
+      "requires": [
+        "sw-b-drop2"
+      ],
+      "color": "#4a5568",
+      "drop": {
+        "color": "#f5c542",
+        "size": 0.95
+      }
+    },
+    {
+      "id": "sw-drop3",
+      "type": "dropper",
+      "pos": [
+        -38,
+        "ground",
+        32
+      ],
+      "every": 4,
+      "value": 5,
+      "plot": "plot-sw",
+      "requires": [
+        "sw-b-drop3"
+      ],
+      "color": "#4a5568",
+      "drop": {
+        "color": "#f5c542",
+        "size": 0.95
+      }
+    },
+    {
+      "id": "sw-mega",
+      "type": "dropper",
+      "pos": [
+        -34,
+        "ground",
+        36
+      ],
+      "every": 3,
+      "value": 25,
+      "plot": "plot-sw",
+      "requires": [
+        "sw-b-mega"
+      ],
+      "color": "#2f3742",
+      "drop": {
+        "color": "#8a5cff",
+        "size": 1.3
+      }
+    },
+    {
+      "id": "plot-se",
+      "type": "claim",
+      "pos": [
+        34,
+        "ground",
+        22.5
+      ],
+      "size": [
+        10,
+        7,
+        1
+      ],
+      "name": "SE PLOT"
+    },
+    {
+      "id": "se-conv",
+      "type": "conveyor",
+      "pos": [
+        34,
+        "ground",
+        32
+      ],
+      "size": [
+        20,
+        0.5,
+        4
+      ],
+      "dir": [
+        1,
+        0
+      ],
+      "speed": 6,
+      "requires": [
+        "plot-se"
+      ]
+    },
+    {
+      "id": "se-col",
+      "type": "collector",
+      "pos": [
+        46.5,
+        "ground",
+        32
+      ],
+      "size": [
+        5,
+        8,
+        6
+      ],
+      "value": 5,
+      "plot": "plot-se",
+      "requires": [
+        "plot-se"
+      ]
+    },
+    {
+      "id": "se-drop1",
+      "type": "dropper",
+      "pos": [
+        26,
+        "ground",
+        32
+      ],
+      "every": 4,
+      "value": 5,
+      "plot": "plot-se",
+      "requires": [
+        "plot-se"
+      ],
+      "color": "#4a5568",
+      "drop": {
+        "color": "#f5c542",
+        "size": 0.95
+      }
+    },
+    {
+      "id": "sign-se",
+      "type": "sign",
+      "pos": [
+        34,
+        "ground",
+        44.2
+      ],
+      "lines": [
+        "SE PLOT",
+        "Gold Rush Mine Co."
+      ],
+      "width": 7
+    },
+    {
+      "id": "se-cp",
+      "type": "checkpoint",
+      "pos": [
+        23,
+        "ground",
+        26
+      ],
+      "requires": [
+        "plot-se"
+      ]
+    },
+    {
+      "id": "se-b-drop2",
+      "type": "button",
+      "pos": [
+        40,
+        "ground",
+        26.5
+      ],
+      "label": "Dropper 2",
+      "cost": 150,
+      "plot": "plot-se"
+    },
+    {
+      "id": "se-b-drop3",
+      "type": "button",
+      "pos": [
+        36,
+        "ground",
+        26.5
+      ],
+      "label": "Dropper 3",
+      "cost": 400,
+      "plot": "plot-se"
+    },
+    {
+      "id": "se-b-faster",
+      "type": "button",
+      "pos": [
+        32,
+        "ground",
+        26.5
+      ],
+      "label": "Faster Drops",
+      "cost": 300,
+      "plot": "plot-se",
+      "patch": {
+        "se-drop1": {
+          "every": 2.5
+        }
+      }
+    },
+    {
+      "id": "se-b-walls",
+      "type": "button",
+      "pos": [
+        28,
+        "ground",
+        26.5
+      ],
+      "label": "Golden Trim",
+      "cost": 800,
+      "plot": "plot-se"
+    },
+    {
+      "id": "se-b-up2",
+      "type": "button",
+      "pos": [
+        40,
+        "ground",
+        29.5
+      ],
+      "label": "Upgrade Drops x2",
+      "cost": 1500,
+      "plot": "plot-se",
+      "incomeMult": 2
+    },
+    {
+      "id": "se-b-up3",
+      "type": "button",
+      "pos": [
+        36,
+        "ground",
+        29.5
+      ],
+      "label": "Upgrade Drops x3",
+      "cost": 3000,
+      "plot": "plot-se",
+      "incomeMult": 3
+    },
+    {
+      "id": "se-b-mega",
+      "type": "button",
+      "pos": [
+        32,
+        "ground",
+        29.5
+      ],
+      "label": "MEGA Dropper",
+      "cost": 6000,
+      "plot": "plot-se"
+    },
+    {
+      "id": "se-b-diamond",
+      "type": "button",
+      "pos": [
+        28,
+        "ground",
+        29.5
+      ],
+      "label": "Diamond Drops",
+      "cost": 12000,
+      "plot": "plot-se",
+      "patch": {
+        "se-drop1": {
+          "value": 12
+        }
+      }
+    },
+    {
+      "id": "se-drop2",
+      "type": "dropper",
+      "pos": [
+        32,
+        "ground",
+        32
+      ],
+      "every": 4,
+      "value": 5,
+      "plot": "plot-se",
+      "requires": [
+        "se-b-drop2"
+      ],
+      "color": "#4a5568",
+      "drop": {
+        "color": "#f5c542",
+        "size": 0.95
+      }
+    },
+    {
+      "id": "se-drop3",
+      "type": "dropper",
+      "pos": [
+        38,
+        "ground",
+        32
+      ],
+      "every": 4,
+      "value": 5,
+      "plot": "plot-se",
+      "requires": [
+        "se-b-drop3"
+      ],
+      "color": "#4a5568",
+      "drop": {
+        "color": "#f5c542",
+        "size": 0.95
+      }
+    },
+    {
+      "id": "se-mega",
+      "type": "dropper",
+      "pos": [
+        34,
+        "ground",
+        36
+      ],
+      "every": 3,
+      "value": 25,
+      "plot": "plot-se",
+      "requires": [
+        "se-b-mega"
+      ],
+      "color": "#2f3742",
+      "drop": {
+        "color": "#8a5cff",
+        "size": 1.3
+      }
+    }
+  ],
+  "script": "Game.on('join', function (name) { Game.toast(name + ' joined the Gold Rush!'); });\nGame.every(60, function () { Game.addMoney(25); Game.toast('Online bonus: +$25'); });\nGame.on('buy', function (label) {\n  if (label === 'MEGA Dropper') Game.banner('A MEGA DROPPER roars to life!');\n  if (label === 'Diamond Drops') Game.banner('DIAMOND DROPS! The gold mine sparkles.');\n});\n"
+}
