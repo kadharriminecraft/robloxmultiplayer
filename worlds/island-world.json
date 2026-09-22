@@ -1,0 +1,43 @@
+{
+  "id": "island-world",
+  "name": "Island World",
+  "desc": "A large elevated grass island — a dirt ring around the edges steps down through the sand into the ocean.",
+  "kind": "terrain",
+  "spawn": { "x": 0, "z": 0 },
+  "sky": {
+    "dayTop": "#4aa3e0",
+    "dayBottom": "#d9eef7"
+  },
+  "terrain": {
+    "size": [176, 176],
+    "seed": 20260922,
+    "waterLevel": 10,
+    "base": 30,
+    "oceanFloor": 3,
+    "noise": [
+      { "scale": 64, "amp": 5.0 },
+      { "scale": 21, "amp": 1.8 },
+      { "scale": 9, "amp": 0.7 }
+    ],
+    "island": { "radius": 62, "edge": 26, "rim": 0.55 },
+    "surface": {
+      "default": "grass",
+      "edge": { "block": "dirt", "below": 0.85 },
+      "beach": { "block": "sand", "below": 12 },
+      "underwater": { "block": "sand" }
+    },
+    "palette": {
+      "grass": "#58a94f",
+      "dirt": "#8a5f3b",
+      "sand": "#e0d29a",
+      "stone": "#8d9298",
+      "water": "#2f7fbf",
+      "leaves": "#3f8f3f",
+      "trunk": "#6b4a2b"
+    }
+  },
+  "scatter": [
+    { "type": "tree", "per": 240, "on": "grass", "min": 0.6, "scale": [0.8, 1.3] },
+    { "type": "rock", "per": 600, "on": "grass", "min": 0.5 }
+  ]
+}
