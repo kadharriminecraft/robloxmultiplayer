@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Baseplate — v17</title>
+<title>Baseplate — v18</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@600;700;800&display=swap" rel="stylesheet">
 <style>
@@ -967,6 +967,7 @@ function applyGraphics() {
    1 stud per unit — no texture clones, one material per color.
 ================================================================ */
 const geoCache = new Map();
+const geoCacheSet = new WeakSet();   // v18: cached geometries are shared — never dispose them
 function geo(w, h, d, studW = 0, studD = 0) {
   const key = w + '|' + h + '|' + d + '|' + studW + '|' + studD;
   let g = geoCache.get(key);
@@ -976,10 +977,12 @@ function geo(w, h, d, studW = 0, studD = 0) {
       const uv = g.attributes.uv;
       for (let i = 8; i < 12; i++) uv.setXY(i, uv.getX(i) * studW, uv.getY(i) * studD);
     }
-    geoCache.set(key, g);
+    geoCache.set(key, g); geoCacheSet.add(g);
   }
   return g;
 }
+
+function geoCacheHas(g) { return geoCacheSet.has(g); }
 
 function makeStudTexture() {
   const c = document.createElement('canvas'); c.width = c.height = 128;
@@ -2729,7 +2732,7 @@ function validateGameLogic(w) {
   const items = new Set(['sword', 'gun', 'apple']);
   const TYPES = ['button', 'claim', 'dropper', 'conveyor', 'collector', 'killbrick',
     'teleport', 'checkpoint', 'pad', 'npc', 'spawner', 'pickup', 'door', 'sign',
-    'claimer', 'zwave'];   // v16: money vault + zombie-wave pad
+    'claimer', 'zwave', 'swing'];   // v16: money vault + zombie-wave pad · v18: swing set
 
   /* items[] — custom weapons + consumables */
   if (w.items != null) {
@@ -2785,17 +2788,18 @@ function validateGameLogic(w) {
   if (w.vars != null) {
     if (typeof w.vars !== 'object' || Array.isArray(w.vars)) return 'bad vars';
     if (w.vars.maxZombies != null && !num(w.vars.maxZombies, 1, 40)) return 'bad vars maxZombies';
+    if (w.vars.loseOnDeath != null && typeof w.vars.loseOnDeath !== 'boolean') return 'bad vars loseOnDeath';   // v18
   }
 
   /* build[] — static parts */
   if (w.build != null) {
-    if (!Array.isArray(w.build) || w.build.length > 400) return 'bad build';
+    if (!Array.isArray(w.build) || w.build.length > 1500) return 'bad build';
     for (const p of w.build) {
       if (!p || typeof p !== 'object') return 'bad build part';
       if (!Array.isArray(p.pos) || p.pos.length !== 3 || !num(p.pos[0], -1000, 1000)) return 'bad part pos';
       if (p.pos[1] !== 'ground' && p.pos[1] !== 'g' && !num(p.pos[1], -200, 500)) return 'bad part pos y';
       if (!num(p.pos[2], -1000, 1000)) return 'bad part pos';
-      if (!Array.isArray(p.size) || p.size.length !== 3 || !num(p.size[0], 0.1, 220) || !num(p.size[1], 0.1, 220) || !num(p.size[2], 0.1, 220)) return 'bad part size on "' + (p.id || 'unnamed') + '"';
+      if (!Array.isArray(p.size) || p.size.length !== 3 || !num(p.size[0], 0.1, 420) || !num(p.size[1], 0.1, 220) || !num(p.size[2], 0.1, 420)) return 'bad part size on "' + (p.id || 'unnamed') + '"';
       if (p.color != null && !hex(p.color)) return 'bad part color';
       if (p.material != null && !['plastic', 'neon', 'glass', 'metal', 'wood'].includes(p.material)) return 'bad part material';
       if (p.shape != null && !['box', 'cyl', 'ball', 'wedge'].includes(p.shape)) return 'bad part shape';
@@ -2812,7 +2816,7 @@ function validateGameLogic(w) {
 
   /* logic[] — the live entities (pass 1: shape) */
   if (w.logic != null) {
-    if (!Array.isArray(w.logic) || w.logic.length > 160) return 'bad logic';
+    if (!Array.isArray(w.logic) || w.logic.length > 320) return 'bad logic';
     for (const e of w.logic) {
       if (!e || typeof e !== 'object') return 'bad entity';
       if (!TYPES.includes(e.type)) return 'entity type "' + e.type + '" unknown';
@@ -2835,6 +2839,7 @@ function validateGameLogic(w) {
           if (e.order != null && !num(e.order, 1, 9999)) return 'button "' + e.id + '" bad order';   // v16: queue rank
           if (e.give != null && !items.has(e.give)) return 'button "' + e.id + '" gives unknown item';
           if (e.grant != null && !num(e.grant, 0, 1e9)) return 'button "' + e.id + '" bad grant';
+          if (e.reclaim != null && typeof e.reclaim !== 'boolean') return 'button "' + e.id + '" bad reclaim';   // v18: weapon stands
           break;
         case 'claim':
           claims.add(e.id);
@@ -2902,9 +2907,22 @@ function validateGameLogic(w) {
           break;
         case 'door':
           if (e.color != null && !hex(e.color)) return 'door "' + e.id + '" bad color';
+          if (e.style != null && !['glass', 'wood'].includes(e.style)) return 'door "' + e.id + '" bad style';
+          if (e.swing != null && e.swing !== 1 && e.swing !== -1) return 'door "' + e.id + '" bad swing';
+          if (e.range != null && !num(e.range, 3, 20)) return 'door "' + e.id + '" bad range';
+          break;
+        case 'swing':
+          if (e.seats != null && !num(e.seats, 1, 3)) return 'swing "' + e.id + '" bad seats';
+          if (e.length != null && !num(e.length, 4, 10)) return 'swing "' + e.id + '" bad length';
+          if (e.color != null && !hex(e.color)) return 'swing "' + e.id + '" bad color';
           break;
         case 'sign':
-          if (e.width != null && !num(e.width, 3, 24)) return 'sign "' + e.id + '" bad width';
+          if (e.width != null && !num(e.width, 2, 24)) return 'sign "' + e.id + '" bad width';
+          if (e.style != null && !['board', 'wall', 'float'].includes(e.style)) return 'sign "' + e.id + '" bad style';
+          if (e.color != null && !hex(e.color)) return 'sign "' + e.id + '" bad color';
+          if (e.textColor != null && !hex(e.textColor)) return 'sign "' + e.id + '" bad textColor';
+          if (e.height != null && !num(e.height, 0, 40)) return 'sign "' + e.id + '" bad height';
+          if (e.range != null && !num(e.range, 15, 200)) return 'sign "' + e.id + '" bad range';
           if (e.text != null && !str(e.text, 90)) return 'sign "' + e.id + '" bad text';
           if (e.lines != null && (!Array.isArray(e.lines) || e.lines.length > 4 || !e.lines.every(l => typeof l === 'string' && l.length <= 60))) return 'sign "' + e.id + '" bad lines';
           break;
@@ -3037,7 +3055,7 @@ try {
      2. island mask t: 1 on the plateau, 0 at the seabed
      3. column height = round(lerp(oceanFloor, base+noise, t))
      4. surface block: underwater → beach → edge ring → default
-     5. render = 2 InstancedMeshes (studded caps + bodies) —
+     5. render = 2 merged meshes (v18: greedy rects, studded tops + sides) —
         2 draw calls for the whole terrain
      6. physics = one grid-indexed collider per column
      7. water = one translucent walkable block at waterLevel
@@ -3137,39 +3155,73 @@ function buildRecipeWorld(w) {
     sArr[i] = s;
   }
 
-  /* ---- 2. render: studded caps + bodies (2 draw calls total) ---- */
-  const unit = new THREE.BoxGeometry(1, 1, 1);
-  const capSide = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.92 });
-  const capTop = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.92, map: studTex });
-  const bodyMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95 });
-  const caps = new THREE.InstancedMesh(unit, [capSide, capSide, capTop, capSide, capSide, capSide], N);
-  const bodies = new THREE.InstancedMesh(unit, bodyMat, N);
-  caps.receiveShadow = bodies.receiveShadow = true;
-  caps.frustumCulled = bodies.frustumCulled = false;    // the terrain IS the world
-  const m4 = new THREE.Matrix4(), q0 = new THREE.Quaternion(), v3 = new THREE.Vector3(), sc3 = new THREE.Vector3();
-  const cTmp = new THREE.Color();
-  const jitter = (out, base, x, z, sd) => out.copy(base).multiplyScalar(0.93 + worldHash(x, z, sd ^ 0x5bd1) * 0.13);
-  const hAt = (ix, iz) => (ix < 0 || iz < 0 || ix >= sx || iz >= sz) ? -1 : hArr[iz * sx + ix];
-  let bi = 0;
-  for (let i = 0; i < N; i++) {
-    const ix = i % sx, iz = (i / sx) | 0;
-    const cx = x0 + ix + 0.5, cz = z0 + iz + 0.5;
-    const h = hArr[i], sName = TERRAIN_BLOCKS[sArr[i]];
-    m4.compose(v3.set(cx, h - 0.5, cz), q0, sc3.set(1, 1, 1));          // the studded cap
-    caps.setMatrixAt(i, m4);
-    caps.setColorAt(i, jitter(cTmp, colOf[sName], ix, iz, seed));
-    /* body below the cap — skipped when all 4 neighbours are at least as
-       tall (every side fully hidden: flat ocean floor, island interior) */
-    if (h - 1 > 0 && (hAt(ix - 1, iz) < h || hAt(ix + 1, iz) < h ||
-                      hAt(ix, iz - 1) < h || hAt(ix, iz + 1) < h)) {
-      m4.compose(v3.set(cx, (h - 1) / 2, cz), q0, sc3.set(1, h - 1, 1));
-      bodies.setMatrixAt(bi, m4);
-      bodies.setColorAt(bi, jitter(cTmp, colOf[UNDER_OF[sName]], iz, ix, seed + 7));
-      bi++;
+  /* ---- 2. render: v18 GREEDY-MERGED SURFACE MESH (2 draw calls) ----
+     v17 drew one instanced cube per 1×1 column — a 400×400 map was
+     160,000 cubes ≈ 1.9M triangles a frame (plus the shadow pass),
+     which is what made the big maps crawl on phones. Now same-height,
+     same-block neighbours merge into rectangles (max 32×32 so the
+     colour jitter still breaks up big fields): each rect is ONE top
+     quad (stud texture tiled by world UVs, so it looks identical) plus
+     side walls only where a neighbour is lower. A flat 400×400 map is
+     ~160 quads instead of 1.9M triangles. */
+  {
+    const hAt = (ix, iz) => (ix < 0 || iz < 0 || ix >= sx || iz >= sz) ? -1 : hArr[iz * sx + ix];
+    const used = new Uint8Array(N);
+    const TP = [], TN = [], TU = [], TC = [], SP = [], SN = [], SC = [];
+    const cTmp = new THREE.Color();
+    const jit = (base, x, z, sd) => cTmp.copy(base).multiplyScalar(0.95 + worldHash(x, z, sd ^ 0x5bd1) * 0.08);
+    const quad = (P, Nn, C, U, a, b, c, d, nx, ny, nz, col, uv) => {
+      /* two triangles a-b-c, a-c-d (counter-clockwise seen from the normal) */
+      for (const q of [a, b, c, a, c, d]) { P.push(q[0], q[1], q[2]); Nn.push(nx, ny, nz); C.push(col.r, col.g, col.b); }
+      if (U) for (const q of [uv[0], uv[1], uv[2], uv[0], uv[2], uv[3]]) U.push(q[0], q[1]);
+    };
+    const MAXR = 32;
+    for (let iz = 0; iz < sz; iz++) for (let ix = 0; ix < sx; ix++) {
+      const i0 = iz * sx + ix;
+      if (used[i0]) continue;
+      const h = hArr[i0], sb = sArr[i0];
+      let w = 1;
+      while (w < MAXR && ix + w < sx && !used[i0 + w] && hArr[i0 + w] === h && sArr[i0 + w] === sb) w++;
+      let d = 1;
+      grow: while (d < MAXR && iz + d < sz) {
+        const base = (iz + d) * sx + ix;
+        for (let k = 0; k < w; k++) if (used[base + k] || hArr[base + k] !== h || sArr[base + k] !== sb) break grow;
+        d++;
+      }
+      for (let r = 0; r < d; r++) for (let k = 0; k < w; k++) used[(iz + r) * sx + ix + k] = 1;
+      const xa = x0 + ix, xb = xa + w, za = z0 + iz, zb = za + d;
+      const sName = TERRAIN_BLOCKS[sb];
+      const top = jit(colOf[sName], ix, iz, seed).clone();
+      quad(TP, TN, TC, TU, [xa, h, za], [xa, h, zb], [xb, h, zb], [xb, h, za], 0, 1, 0, top,
+        [[xa, -za], [xa, -zb], [xb, -zb], [xb, -za]]);
+      /* sides: one wall per edge, down to the LOWEST neighbour along it */
+      const side = jit(colOf[UNDER_OF[sName]], iz, ix, seed + 7).clone();
+      let lo;
+      lo = h; for (let k = 0; k < w; k++) lo = Math.min(lo, hAt(ix + k, iz - 1));          // -z edge
+      if (lo < h) quad(SP, SN, SC, null, [xb, h, za], [xb, Math.max(0, lo), za], [xa, Math.max(0, lo), za], [xa, h, za], 0, 0, -1, side);
+      lo = h; for (let k = 0; k < w; k++) lo = Math.min(lo, hAt(ix + k, iz + d));          // +z edge
+      if (lo < h) quad(SP, SN, SC, null, [xa, h, zb], [xa, Math.max(0, lo), zb], [xb, Math.max(0, lo), zb], [xb, h, zb], 0, 0, 1, side);
+      lo = h; for (let r = 0; r < d; r++) lo = Math.min(lo, hAt(ix - 1, iz + r));          // -x edge
+      if (lo < h) quad(SP, SN, SC, null, [xa, h, za], [xa, Math.max(0, lo), za], [xa, Math.max(0, lo), zb], [xa, h, zb], -1, 0, 0, side);
+      lo = h; for (let r = 0; r < d; r++) lo = Math.min(lo, hAt(ix + w, iz + r));          // +x edge
+      if (lo < h) quad(SP, SN, SC, null, [xb, h, zb], [xb, Math.max(0, lo), zb], [xb, Math.max(0, lo), za], [xb, h, za], 1, 0, 0, side);
     }
+    const mk = (P, Nn, C, U, mtl) => {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+      g.setAttribute('normal', new THREE.Float32BufferAttribute(Nn, 3));
+      g.setAttribute('color', new THREE.Float32BufferAttribute(C, 3));
+      if (U) g.setAttribute('uv', new THREE.Float32BufferAttribute(U, 2));
+      g.computeBoundingSphere();
+      const m = new THREE.Mesh(g, mtl);
+      m.receiveShadow = true;
+      m.matrixAutoUpdate = false;
+      scene.add(m);
+      return m;
+    };
+    mk(TP, TN, TC, TU, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.92, map: studTex, vertexColors: true }));
+    if (SP.length) mk(SP, SN, SC, null, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95, vertexColors: true }));
   }
-  bodies.count = bi;
-  scene.add(caps, bodies);
 
   /* ---- 2b. physics: GREEDY RECTANGLE MERGE (v15 perf) ----
      Same-height neighbour columns merge into one wide AABB. A flat
@@ -3333,18 +3385,19 @@ function wlButtonLabel(label, costText, lv) {
   const W = 192, H = 80;
   const c = document.createElement('canvas'); c.width = W; c.height = H;
   const x = c.getContext('2d');
-  x.fillStyle = 'rgba(9,13,18,0.66)';
-  x.strokeStyle = 'rgba(255,255,255,0.16)';
-  x.lineWidth = 3;
-  x.beginPath(); x.roundRect(4, 4, W - 8, H - 8, 16); x.fill(); x.stroke();
-  x.textAlign = 'center'; x.textBaseline = 'middle';
+  /* v18: no backing pill — just outlined text, like a Roblox price tag */
+  x.textAlign = 'center'; x.textBaseline = 'middle'; x.lineJoin = 'round';
+  x.strokeStyle = 'rgba(10,14,20,0.75)';
   const name = String(label || '?').slice(0, 22) + (lv > 0 ? ' · Lv' + lv : '');
   x.font = '600 21px "Trebuchet MS", "Segoe UI", sans-serif';
+  x.lineWidth = 5; x.strokeText(name, W / 2, 24, W - 8);
   x.fillStyle = '#ffffff';
-  x.fillText(name, W / 2, 24);
-  x.font = '700 27px "Trebuchet MS", "Segoe UI", sans-serif';
+  x.fillText(name, W / 2, 24, W - 8);
+  x.font = '700 25px "Trebuchet MS", "Segoe UI", sans-serif';
+  const ct = String(costText).slice(0, 24);
+  x.lineWidth = 6; x.strokeText(ct, W / 2, 55, W - 8);
   x.fillStyle = '#f5c542';
-  x.fillText(String(costText).slice(0, 16), W / 2, 55);
+  x.fillText(ct, W / 2, 55, W - 8);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 2;
   const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
@@ -3353,6 +3406,55 @@ function wlButtonLabel(label, costText, lv) {
 }
 
 /* canvas-text sprite — button billboards, signs, NPC names */
+/* v18: rot -> quarter turns 0..3 (entities snap to 90° steps) */
+function wlQuarter(r) { return ((Math.round((+r || 0) / 90) % 4) + 4) % 4; }
+
+/* v18: FLOATING TEXT — small, subtle, no backing board. White text
+   with a soft dark outline; fades out past `range` studs so a busy
+   map isn't a wall of labels. Used by claims + `sign` style "float". */
+const WL_FLOATERS = [];
+function wlFloatText(lines, opts = {}) {
+  const n = lines.length, W = 512, LH = [58, 40];
+  const H = 24 + lines.reduce((a, _, i) => a + (i === 0 ? LH[0] : LH[1]), 0);
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const x = c.getContext('2d');
+  x.textAlign = 'center'; x.textBaseline = 'middle'; x.lineJoin = 'round';
+  let yy = 12;
+  lines.forEach((ln, i) => {
+    const big = i === 0, lh = big ? LH[0] : LH[1];
+    x.font = (big ? 'bold 46px' : '600 32px') + ' "Trebuchet MS", "Segoe UI", sans-serif';
+    const t = typeof ln === 'object' ? String(ln.text) : String(ln);
+    x.lineWidth = big ? 9 : 7; x.strokeStyle = 'rgba(10,14,20,0.72)';
+    x.strokeText(t.slice(0, 40), W / 2, yy + lh / 2, W - 16);
+    x.fillStyle = typeof ln === 'object' && ln.color ? ln.color : (big ? '#ffffff' : 'rgba(235,242,250,0.92)');
+    x.fillText(t.slice(0, 40), W / 2, yy + lh / 2, W - 16);
+    yy += lh;
+  });
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
+  const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, opacity: 0.92 }));
+  const sw = opts.width || 5;
+  spr.scale.set(sw, sw * (H / W), 1);
+  spr.userData.range = opts.range || 60;
+  WL_FLOATERS.push(spr);
+  return spr;
+}
+function wlDropFloater(spr) {
+  const i = WL_FLOATERS.indexOf(spr); if (i >= 0) WL_FLOATERS.splice(i, 1);
+  scene.remove(spr);
+  if (spr.material) { if (spr.material.map) spr.material.map.dispose(); spr.material.dispose(); }
+}
+let wlFloatT = 0;
+function wlTickFloaters(dt) {             /* distance fade, 4x a second (cheap) */
+  wlFloatT -= dt; if (wlFloatT > 0) return; wlFloatT = 0.25;
+  const px = camera.position.x, pz = camera.position.z;
+  for (const s of WL_FLOATERS) {
+    if (s.userData.hidden) { s.visible = false; continue; }
+    const r = s.userData.range;
+    s.visible = (s.position.x - px) ** 2 + (s.position.z - pz) ** 2 < r * r;
+  }
+}
+
 function wlTextSprite(lines, opts = {}) {
   const W = opts.W || 512, H = opts.H || 256;
   const c = document.createElement('canvas'); c.width = W; c.height = H;
@@ -3520,8 +3622,10 @@ const GameLogic = {
     /* v16: per-world engine overrides — zombie cap etc. Saved so a world
        exit puts the engine back exactly as it was. */
     this._savedVars = null;
+    this.loseOnDeath = false; this.doorMode = 'auto';
     if (recipe.vars && typeof recipe.vars === 'object' && !Array.isArray(recipe.vars)) {
       const v = recipe.vars;
+      this.loseOnDeath = v.loseOnDeath === true;       // v18
       if (typeof v.maxZombies === 'number' && isFinite(v.maxZombies)) {
         this._savedVars = { maxZombies: V.maxZombies };
         V.maxZombies = Math.round(clamp(v.maxZombies, 1, 40));
@@ -3541,6 +3645,7 @@ const GameLogic = {
     if (Array.isArray(recipe.build))
       for (const p of recipe.build) this.buildPart(p);
     this.mergeStatic();                  // v17: one draw per material instead of per face
+    this.mergeGated();                   // v18: gate groups merge too (walls, floors, roofs)
 
     /* 2. entities */
     if (Array.isArray(recipe.logic))
@@ -3578,6 +3683,7 @@ const GameLogic = {
     }
     this.plotBank = {};
     this.claimers.length = 0;
+    this.loseOnDeath = false; this.doorMode = 'auto';
     this.active = false;
   },
 
@@ -3699,10 +3805,10 @@ const GameLogic = {
         m = new THREE.Mesh(new THREE.CylinderGeometry(Math.max(w, d) / 2, Math.max(w, d) / 2, h, Math.max(6, Math.min(24, Math.round(w * 2)))), mtl);
         m.position.set(cx, cy, cz);
       } else if (shape === 'ball') {
-        m = new THREE.Mesh(new THREE.SphereGeometry(Math.max(w, d) / 2, 14, 10), mtl);
+        m = new THREE.Mesh(new THREE.SphereGeometry(Math.max(w, d) / 2, 14, 10), Array.isArray(mtl) ? mtl[0] : mtl);   // v18: no groups -> one material
         m.position.set(cx, cy, cz);
       } else if (shape === 'wedge') {
-        m = this.buildWedge(w, h, d, mtl);
+        m = this.buildWedge(w, h, d, Array.isArray(mtl) ? mtl[0] : mtl);
         m.position.set(cx, cy, cz);
       } else {
         m = new THREE.Mesh(geo(w, h, d, material === 'plastic' ? w : 0, material === 'plastic' ? d : 0), mtl);
@@ -3714,7 +3820,13 @@ const GameLogic = {
       rec.meshes.push(m);
       if (!p.requires) this._static.push(m);        // v17: merged after the build pass
       if (p.noCollide !== true && shape !== 'wedge') {   // wedges are trim (AABB physics can't slope)
-        rec.colliders.push(World.addBox(cx, cy, cz, w, h, d));
+        /* v18 fix: the collider follows the part's yaw. v17 rotated the
+           MESH but kept the unrotated box, so a wall at rot 90 blocked
+           the doorway beside it (and let you walk through itself). */
+        const ra = (p.rot || 0) * Math.PI / 180, cs = Math.abs(Math.cos(ra)), sn = Math.abs(Math.sin(ra));
+        const cw = (shape === 'cyl' || shape === 'ball') ? w : w * cs + d * sn;
+        const cd = (shape === 'cyl' || shape === 'ball') ? d : w * sn + d * cs;
+        rec.colliders.push(World.addBox(cx, cy, cz, cw, h, cd));
       }
     }
     rec.show = () => { rec.revealT = 0; for (const m of rec.meshes) m.visible = true; for (const c of rec.colliders) c.enabled = true; };
@@ -3734,8 +3846,40 @@ const GameLogic = {
   mergeStatic() {
     const list = this._static; this._static = [];
     if (list.length < 2) return;
+    for (const mesh of this.mergeMeshes(list, null)) this.merged.push(mesh);
+  },
+  /* v18 PERFORMANCE: GATED parts merge too. Every part that shares the
+     exact same `requires` list always shows/hides together, so each
+     gate group is baked into one mesh per material (a tycoon floor of
+     40 walls + stairs = a handful of draws instead of ~240). The mesh
+     pivots at the group's bottom-center so the reveal pop still
+     scales up out of the floor. Colliders stay per part. */
+  mergeGated() {
+    const groups = new Map();
+    for (const rec of this.parts) {
+      if (!rec.def.requires || !rec.meshes.length) continue;
+      const key = rec.def.requires.slice().sort().join('|');
+      let g = groups.get(key);
+      if (!g) groups.set(key, g = []);
+      g.push(rec);
+    }
+    for (const recs of groups.values()) {
+      const meshes = [];
+      for (const r of recs) for (const m of r.meshes) meshes.push(m);
+      if (meshes.length < 2) continue;
+      const bb = new THREE.Box3();
+      for (const m of meshes) { m.updateMatrixWorld(true); bb.expandByObject(m); }
+      const pivot = new THREE.Vector3((bb.min.x + bb.max.x) / 2, bb.min.y, (bb.min.z + bb.max.z) / 2);
+      const merged = this.mergeMeshes(meshes, pivot);
+      const vis = recs[0].meshes[0].visible;
+      for (const m of merged) m.visible = vis;
+      for (const r of recs) r.meshes = merged;      // shared: every rec toggles the same meshes
+    }
+  },
+  mergeMeshes(list, pivot) {
     const buckets = new Map();
     const v = new THREE.Vector3(), n = new THREE.Vector3(), nm = new THREE.Matrix3();
+    const px = pivot ? pivot.x : 0, py = pivot ? pivot.y : 0, pz = pivot ? pivot.z : 0;
     for (const m of list) {
       if (!m.isMesh || !m.geometry || !m.geometry.attributes.position) continue;
       m.updateMatrixWorld(true);
@@ -3751,7 +3895,7 @@ const GameLogic = {
         const end = Math.min(total, gr.start + (isFinite(gr.count) ? gr.count : total));
         for (let i = gr.start; i < end; i++) {
           const k = I ? I.getX(i) : i;
-          v.fromBufferAttribute(P, k).applyMatrix4(m.matrixWorld); b.p.push(v.x, v.y, v.z);
+          v.fromBufferAttribute(P, k).applyMatrix4(m.matrixWorld); b.p.push(v.x - px, v.y - py, v.z - pz);
           if (N) { n.fromBufferAttribute(N, k).applyMatrix3(nm).normalize(); b.n.push(n.x, n.y, n.z); }
           else b.n.push(0, 1, 0);
           if (U) b.u.push(U.getX(k), U.getY(k)); else b.u.push(0, 0);
@@ -3759,7 +3903,9 @@ const GameLogic = {
       }
       scene.remove(m);
       m.visible = false;
+      if (m.geometry && !geoCacheHas(m.geometry)) m.geometry.dispose();
     }
+    const out = [];
     for (const [mt, b] of buckets) {
       const g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.Float32BufferAttribute(b.p, 3));
@@ -3768,22 +3914,27 @@ const GameLogic = {
       g.computeBoundingSphere();
       const mesh = new THREE.Mesh(g, mt);
       mesh.castShadow = mesh.receiveShadow = true;
-      mesh.matrixAutoUpdate = false;
+      if (pivot) mesh.position.copy(pivot);
+      else mesh.matrixAutoUpdate = false;
       scene.add(mesh);
-      this.merged.push(mesh);
+      out.push(mesh);
     }
+    return out;
   },
   buildWedge(w, h, d, mtl) {
     /* right-angle ramp: slope from the top of -z up to the top of +z */
     const g = new THREE.BufferGeometry();
     const hw = w / 2, hd = d / 2;
-    const v = [
-      -hw, 0, -hd,  hw, 0, -hd,  hw, 0,  hd,   -hw, 0,  hd,    // floor
-      -hw, h,  hd,  hw, h,  hd,  hw, 0,  hd,   -hw, 0,  hd,    // back wall (+z, full height)
-      -hw, 0, -hd,  hw, 0, -hd,  hw, h,  hd,   -hw, h,  hd,    // slope
-      -hw, 0,  hd, -hw, h,  hd, -hw, 0, -hd,                    // -x side
-       hw, 0, -hd,  hw, h,  hd,  hw, 0,  hd,                    // +x side
-    ];
+    /* v18 fix: real triangles. v17 listed QUADS as a flat vertex list on
+       a non-indexed geometry, so the GPU read them as random triangles
+       (the "shattered roof" look). 8 triangles, all facing outward. */
+    const A = [-hw, 0, -hd], B = [hw, 0, -hd], C = [hw, 0, hd], D = [-hw, 0, hd], E = [-hw, h, hd], F = [hw, h, hd];
+    const v = [].concat(
+      A, B, C, A, C, D,          // floor
+      D, C, F, D, F, E,          // back wall (+z, full height)
+      A, E, F, A, F, B,          // slope
+      A, D, E,                   // -x side
+      B, F, C);                  // +x side
     g.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
     g.computeVertexNormals();
     return new THREE.Mesh(g, mtl);
@@ -3802,7 +3953,9 @@ const GameLogic = {
       gate: e.requires ? null : true, buys: 0, killCd: 0, tpCd: 0, spawnT: 0,
       aabb: { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } }
     };
-    const S = Array.isArray(e.size) ? e.size : null;
+    let S = Array.isArray(e.size) ? e.size : null;
+    /* v18: a quarter-turn entity (rot 90/270) swaps its footprint */
+    if (S && wlQuarter(e.rot) % 2 === 1) S = [S[2], S[1], S[0]];
     if (S) { rec.aabb.min.x = x - S[0] / 2; rec.aabb.max.x = x + S[0] / 2;
              rec.aabb.min.y = y; rec.aabb.max.y = y + S[1];
              rec.aabb.min.z = z - S[2] / 2; rec.aabb.max.z = z + S[2] / 2; }
@@ -3841,6 +3994,22 @@ const GameLogic = {
       return;
     }
     WS.act('tyc', { t: 'b', e: rec.id });
+  },
+
+  /* v18: step on an owned weapon stand -> get the weapon back (free) */
+  reclaimTouch(rec) {
+    if (menuOpen || userModalOpen || this.dlgOpen) return;
+    if (rec.def.plot && !this.myPlot(rec.def.plot)) return;
+    const rid = this.itemRid(rec.def.give);
+    if (!rid) return;
+    if (Inventory.slots.some(s => s && s.id === rid)) return;      // already carrying it
+    if (Inventory.give(rid) < 0) { wlToast('Hotbar full!', true); return; }
+    wlToast(ITEM_DEFS[rid].name + ' re-equipped');
+  },
+  itemRid(id) {
+    if (!id) return null;
+    const rid = ITEM_DEFS[this.worldId + '.' + id] ? this.worldId + '.' + id : id;
+    return ITEM_DEFS[rid] ? rid : null;
   },
 
   applyBuy(id) {
@@ -4016,6 +4185,20 @@ const GameLogic = {
       if (elapsed - gh.t > 4) { scene.remove(gh.mesh); PetRemotes.delete(id); }
     for (const rec of this.entities) if (rec.tick) { try { rec.tick(dt); } catch (e) { console.error('[world] tick', rec.id, e); rec.tick = null; } }
     this.tickDrops(dt);
+    wlTickFloaters(dt);                              // v18: fade far labels
+    /* v18 fix: ORPHAN plots. When the last player leaves nobody is left
+       to reset their plot, so the relay kept the claim and the next
+       player to join found every base "owned" by a ghost forever. Once
+       we've been connected long enough to know who's here, any claim
+       whose owner isn't in the room goes back on the market. */
+    if (!MP.connected) this._orphT = 0;
+    else if ((this._orphT = (this._orphT || 0) + dt) > 7) {
+      this._orphT = 4;                                 // re-check every 3 s
+      for (const cid in this.state.c) {
+        const c = this.state.c[cid];
+        if (c && c.i !== MP.id && !MP.remotes.has(c.i)) this.resetPlot(cid, true);
+      }
+    }
 
     /* buffs */
     if (this.buffs.speedT > 0) this.buffs.speedT -= dt;
@@ -4077,7 +4260,8 @@ const GameLogic = {
            keeps the "need more money" nag polite while you stand there. */
         if (hit && player.grounded && rec.pressCd <= 0) {
           rec.pressCd = 0.55;
-          this.tryBuy(rec, true);
+          if (rec.def.reclaim && rec.buys >= (rec.def.maxBuys || 1)) this.reclaimTouch(rec);
+          else this.tryBuy(rec, true);
         }
       } else if (rec.kind === 'claimer') {
         /* v16: step on the vault — owner sweeps it, raiders skim a cut */
@@ -4412,7 +4596,27 @@ const GameLogic = {
       myId: () => MP.id,
       after: (sec, fn) => { if (typeof fn === 'function') timers.after.push({ t: Math.max(0, +sec || 0), fn }); },
       every: (sec, fn) => { if (typeof fn === 'function') timers.every.push({ t: Math.max(0.05, +sec || 1), sec: Math.max(0.05, +sec || 1), fn }); },
-      log: (...a) => console.log('[world]', ...a)
+      log: (...a) => console.log('[world]', ...a),
+      /* v18: WORLD ADMIN tools. isAdmin() = me (verified by the relay
+         with the admin code); isAdmin(id) = a remote player — their
+         admin flag rides the relay-stamped state, so a script can
+         trust an onNet message only when isAdmin(from) is true. */
+      isAdmin: id => (id == null || id === MP.id) ? !!isAdmin : !!(MP.remotes.get(id) && MP.remotes.get(id).admin),
+      /* visual only (the local sky) — so an admin's /time broadcast can apply on every client */
+      setTime: h => { if (!isFinite(+h)) return false; setVal('dayTime', ((+h || 0) % 24 + 24) % 24); return true; },
+      adminBuy: id => {
+        if (!isAdmin) return false;
+        const rec = GL.buttons.get(String(id));
+        if (!rec || rec.buys >= (rec.def.maxBuys || 1)) return false;
+        WS.act('tyc', { t: 'b', e: rec.id });
+        return true;
+      },
+      buttons: plot => [...GL.buttons.values()].filter(r => plot == null || r.def.plot === plot)
+        .map(r => ({ id: r.id, label: r.def.label || r.id, bought: r.buys >= (r.def.maxBuys || 1), give: r.def.give || null, order: r.def.order || 0 })),
+      myPlots: () => Object.keys(GL.state.c).filter(k => GL.state.c[k].i === MP.id),
+      items: () => (recipe.items || []).map(i => i.id),
+      setDoors: mode => { if (['auto', 'open', 'locked'].includes(mode)) { GL.doorMode = mode; return true; } return false; },
+      pos: () => ({ x: player.x, y: player.y, z: player.z })
     };
     try { (new Function('Game', '"use strict";\n' + code))(api); }
     catch (e) { console.error('[world script] failed to start:', e); }
@@ -4515,10 +4719,28 @@ const WL_BUILDERS = {
       }
     }
     let afford = null, tAcc = 0;
+    /* v18: a `reclaim` weapon stand stays after you buy it — gold pad,
+       case still spinning — and hands the weapon back (free) whenever
+       you step on it without it in your hotbar (e.g. after dying) */
+    const owned = () => rec.buys >= (e.maxBuys || 1);
+    const mkOwned = () => wlButtonLabel(e.label || e.id, 'OWNED \u00b7 step to equip', 0);
     rec.tick = dt => {
-      if (rec.buys >= (e.maxBuys || 1)) return;
+      if (owned() && !e.reclaim) return;
       if (rec.pressCd > 0) rec.pressCd -= dt;
       if (caseSpin) caseSpin.rotation.y += dt * 1.4;
+      /* v18: far-away cases are hidden (each one is a few draw calls) */
+      if (caseGrp) {
+        rec.caseT = (rec.caseT || 0) - dt;
+        if (rec.caseT <= 0) {
+          rec.caseT = 0.4;
+          const far = (camera.position.x - x) ** 2 + (camera.position.z - z) ** 2 > 95 * 95;
+          if (far !== !!rec.caseFar) { rec.caseFar = far; caseGrp.visible = rec.caseOn !== false && !far; }
+        }
+      }
+      if (owned()) {
+        rec.spr.position.y = (caseGrp ? y + 4.5 : y + 2.55) + Math.sin(elapsed * 1.6) * 0.12;
+        return;
+      }
       /* pop-in when the gate opens */
       if (rec.popT >= 0 && rec.popT < 0.32) {
         rec.popT += dt;
@@ -4538,11 +4760,18 @@ const WL_BUILDERS = {
       rec.spr.position.y = (caseGrp ? y + 4.5 : y + 2.55) + Math.sin(elapsed * 1.6) * 0.12;
     };
     rec.refresh = () => {
-      const done = rec.buys >= (e.maxBuys || 1);
-      padMesh.visible = rec.spr.visible = !done && !rec.qHide;
-      if (caseGrp) caseGrp.visible = !done;
-      if (done) { padMesh.material.color.setHex(0x38b24a); }
-      else rec.relLabel();
+      const done = owned();
+      const keep = !!(done && e.reclaim && rec.gate !== false);   // v18: strict bool (visible=undefined RENDERS in three.js)
+      padMesh.visible = rec.spr.visible = !!((!done || keep) && !rec.qHide && rec.gate !== false);
+      rec.caseOn = (!done || keep) && rec.gate !== false;
+      if (caseGrp) caseGrp.visible = !!(rec.caseOn && !rec.caseFar);
+      if (done && e.reclaim) {
+        padMesh.material.color.setHex(0xf5c542);
+        const pos = rec.spr.position.clone(), vis = rec.spr.visible;
+        rec.spr.material.map.dispose(); rec.spr.material.dispose(); scene.remove(rec.spr);
+        rec.spr = mkOwned(); rec.spr.position.copy(pos); rec.spr.visible = vis; scene.add(rec.spr);
+      } else if (done) { padMesh.material.color.setHex(0x38b24a); }
+      else { padMesh.material.color.setHex(0x38b24a); afford = null; rec.relLabel(); }
     };
     rec.unreset = () => { afford = null; };
     rec.dispose = () => {
@@ -4551,10 +4780,12 @@ const WL_BUILDERS = {
       if (caseGrp) scene.remove(caseGrp);
     };
     rec.setGate = ok => {
-      const vis = ok && rec.buys < (e.maxBuys || 1) && !rec.qHide;
+      const live = !owned() || !!e.reclaim;
+      const vis = ok && live && !rec.qHide;
       const was = padMesh.visible;
       padMesh.visible = rec.spr.visible = vis;
-      if (caseGrp) caseGrp.visible = ok && rec.buys < (e.maxBuys || 1);
+      rec.caseOn = ok && live;
+      if (caseGrp) caseGrp.visible = !!(rec.caseOn && !rec.caseFar);
       if (ok && vis && !was && rec.popT < 0) rec.popT = 0;   // POP!
     };
   },
@@ -4566,41 +4797,50 @@ const WL_BUILDERS = {
     rec.aabb.min.x -= 1.7; rec.aabb.max.x += 1.7;
     rec.aabb.min.z -= 1.7; rec.aabb.max.z += 1.7;
     rec.aabb.min.y -= 0.5;
-    /* frame + translucent barrier */
-    const frameM = mat(0x37414f, 0.6);
+    /* v18: the frame, barrier AND collider follow `rot` (90° steps) —
+       v17 always ran them along X, so a claim in an X-facing wall
+       sealed the doorway sideways and nobody could get in or out */
+    const q = wlQuarter(e.rot), alongZ = q % 2 === 1;
     const w = Array.isArray(e.size) ? e.size[0] : 8;
     const h = Array.isArray(e.size) ? e.size[1] : 6;
-    const postL = box(0.7, h, 0.7, frameM, x - w / 2, y + h / 2, z);
-    const postR = box(0.7, h, 0.7, frameM, x + w / 2, y + h / 2, z);
-    const top = box(w + 0.7, 0.7, 0.7, mat(0xf5c542, 0.4, 0.6), x, y + h, z);
-    const barM = new THREE.MeshStandardMaterial({ color: 0x7fd0ff, roughness: 0.2, transparent: true, opacity: 0.34 });
-    const bar = box(w, h - 0.6, 0.35, barM, x, y + (h - 0.6) / 2, z);
-    rec.collider = World.addBox(x, y + h / 2, z, w, h, 0.6);
-    /* the sign above */
-    const spr = wlTextSprite([e.name || 'PLOT FOR SALE', { text: 'step in to claim', color: '#9fd8ff' }],
-      { width: 8, W: 512, H: 224, border: 'rgba(159,216,255,0.6)' });
-    spr.position.set(x, y + h + 2.4, z);
-    scene.add(spr);
-    rec.spr = spr;
-    rec.refresh = () => {
-      const s = GameLogic.state.c[rec.id];
-      const pos = rec.spr.position.clone();
-      const ns = wlTextSprite(s ? [e.name || 'PLOT', { text: s.n, color: '#f5c542' }] :
-        [e.name || 'PLOT FOR SALE', { text: 'step in to claim', color: '#9fd8ff' }],
-        { width: 8, W: 512, H: 224, border: s ? 'rgba(245,197,66,0.65)' : 'rgba(159,216,255,0.6)' });
-      ns.position.copy(pos);
-      rec.spr.material.map.dispose(); rec.spr.material.dispose();
-      scene.remove(rec.spr);
-      scene.add(ns);
-      rec.spr = ns;
+    const grp = new THREE.Group();
+    grp.position.set(x, y, z);
+    grp.rotation.y = q * Math.PI / 2;
+    const frameM = mat(0x37414f, 0.6);
+    for (const sx of [-1, 1]) {
+      const post = new THREE.Mesh(geo(0.7, h, 0.9), frameM);
+      post.position.set(sx * w / 2, h / 2, 0); post.castShadow = true; grp.add(post);
+    }
+    const top = new THREE.Mesh(geo(w + 0.7, 0.7, 0.9), mat(0xf5c542, 0.4, 0.6));
+    top.position.set(0, h, 0); grp.add(top);
+    const barM = new THREE.MeshStandardMaterial({ color: 0x7fd0ff, roughness: 0.2, transparent: true, opacity: 0.3, depthWrite: false });
+    const bar = new THREE.Mesh(geo(w, h - 0.4, 0.3), barM);
+    bar.position.set(0, (h - 0.4) / 2, 0); grp.add(bar);
+    scene.add(grp);
+    rec.collider = alongZ ? World.addBox(x, y + h / 2, z, 0.6, h, w) : World.addBox(x, y + h / 2, z, w, h, 0.6);
+    /* v18: a small floating label instead of the big billboard */
+    const mk = () => {
+      const st = GameLogic.state.c[rec.id];
+      const spr = wlFloatText(st ? [e.name || 'PLOT', { text: st.n + '\u2019s base', color: '#f5c542' }]
+        : [e.name || 'PLOT FOR SALE', { text: e.cost > 0 ? 'step in to claim \u00b7 ' + wlMoney(e.cost) : 'step in to claim', color: '#9fd8ff' }],
+        { width: 4.6, range: 70 });
+      spr.position.set(x, y + h + 1.5, z);
+      scene.add(spr);
+      return spr;
     };
+    rec.spr = mk();
+    rec.refresh = () => { wlDropFloater(rec.spr); rec.spr = mk(); };
+    let mine = null;
     rec.tick = () => {
       /* the barrier only lets the plot owner through (on their screen) */
-      rec.collider.enabled = !GameLogic.myPlot(rec.id);
-      bar.material.opacity = GameLogic.myPlot(rec.id) ? 0.08 : 0.34;
+      const m = GameLogic.myPlot(rec.id);
+      if (m === mine) return;
+      mine = m;
+      rec.collider.enabled = !m;
+      barM.opacity = m ? 0.07 : 0.3;
     };
     rec.dispose = () => {
-      scene.remove(postL); scene.remove(postR); scene.remove(top); scene.remove(bar); scene.remove(rec.spr);
+      scene.remove(grp); wlDropFloater(rec.spr);
       rec.collider.enabled = false;
       const ix = World.colliders.indexOf(rec.collider); if (ix >= 0) World.colliders.splice(ix, 1);
     };
@@ -4804,11 +5044,11 @@ const WL_BUILDERS = {
     solid(S[0], S[1], S[2], mat(0x2b323d, 0.55, 0.5), x, y + S[1] / 2, z);
     const rim = box(S[0] + 0.3, 0.5, S[2] + 0.3,
       new THREE.MeshStandardMaterial({ color: 0x0f1a10, emissive: 0x39d353, emissiveIntensity: 1.6 }), x, y + S[1] + 0.3, z);
-    const spr = wlTextSprite([{ text: wlMoney(e.value || 1) + ' / drop', color: '#39d353' }], { width: 5.5, W: 512, H: 128, bg: 'rgba(10,30,14,0.85)' });
-    spr.position.set(x, y + S[1] + 2.6, z);
+    const spr = wlFloatText([{ text: wlMoney(e.value || 1) + ' / drop', color: '#7dff96' }], { width: 3.6, range: 50 });
+    spr.position.set(x, y + S[1] + 1.6, z);
     scene.add(spr);
     rec.spr = spr; rec.rim = rim;
-    rec.dispose = () => { scene.remove(rim); scene.remove(spr); };
+    rec.dispose = () => { scene.remove(rim); wlDropFloater(spr); };
   },
 
   /* KILL BRICK — touch = massive damage */
@@ -4867,13 +5107,13 @@ const WL_BUILDERS = {
     disc.receiveShadow = true;
     scene.add(disc);
     World.addBox(x, y + 0.13, z, 4.6, 0.26, 4.6);
-    const spr = wlTextSprite([{ text: (e.effect || '').toUpperCase() + (e.effect === 'launch' ? ' x' + (e.power || 60) : ''), color: '#' + (col & 0xffffff).toString(16).padStart(6, '0') }],
-      { width: 4.2, W: 384, H: 96, bg: 'rgba(13,17,23,0.6)' });
-    spr.position.set(x, y + 2.4, z);
+    const spr = wlFloatText([{ text: (e.effect || '').toUpperCase() + (e.effect === 'launch' ? ' x' + (e.power || 60) : ''), color: '#' + (col & 0xffffff).toString(16).padStart(6, '0') }],
+      { width: 3.2, range: 45 });
+    spr.position.set(x, y + 2.0, z);
     scene.add(spr);
     rec.disc = disc; rec.spr = spr;
     rec.tick = dt => { disc.rotation.y += dt * 2.0; };
-    rec.dispose = () => { scene.remove(disc); scene.remove(spr); };
+    rec.dispose = () => { scene.remove(disc); wlDropFloater(spr); };
   },
 
   /* NPC — dialogue + optional weapon shop */
@@ -4997,49 +5237,283 @@ const WL_BUILDERS = {
   /* DOOR — opens for the plot owner (or forever once required) */
   door(rec, e, x, y, z) {
     rec.kind = 'door';
-    const S = Array.isArray(e.size) ? e.size : [7, 7, 0.6];
+    /* v18: doors follow `rot` (90° steps), come in two looks ("glass"
+       sliding-panel style or a solid "wood" house door with a knob),
+       and — unless they belong to a plot — open AUTOMATICALLY for
+       anyone who walks up (local player or anyone in the room), then
+       swing shut behind them. Plot doors still open only for the
+       owner. Admins can force every public door open / locked. */
+    const S = Array.isArray(e.size) ? e.size : [5, 8, 0.4];
+    const q = wlQuarter(e.rot), alongZ = q % 2 === 1;
+    const wood = e.style === 'wood';
+    const dir = e.swing === -1 ? -1 : 1;
+    const range = wlNum(e.range, 3, 20, 7);
+    const grp = new THREE.Group();
+    grp.position.set(x, y, z);
+    grp.rotation.y = q * Math.PI / 2;
+    scene.add(grp);
     const pivot = new THREE.Group();
-    pivot.position.set(x - S[0] / 2, y, z);
-    scene.add(pivot);
-    const panel = new THREE.Mesh(geo(S[0], S[1], S[2]),
-      new THREE.MeshStandardMaterial({ color: wlIsHex(e.color) ? wlHex(e.color) : 0x7fd0ff, roughness: 0.25, transparent: true, opacity: 0.42 }));
+    pivot.position.set(-S[0] / 2, 0, 0);
+    grp.add(pivot);
+    const col = wlIsHex(e.color) ? wlHex(e.color) : (wood ? 0x7a5230 : 0x7fd0ff);
+    const panelM = wood ? mat(col, 0.7, 0, 0.2)
+      : new THREE.MeshStandardMaterial({ color: col, roughness: 0.25, transparent: true, opacity: 0.42 });
+    const panel = new THREE.Mesh(geo(S[0] - 0.1, S[1] - 0.05, S[2]), panelM);
     panel.position.set(S[0] / 2, S[1] / 2, 0);
     panel.castShadow = true;
     pivot.add(panel);
-    const frameM = mat(0x37414f, 0.6);
-    box(0.8, S[1] + 0.8, 1.0, frameM, x - S[0] / 2, y + (S[1] + 0.8) / 2, z);
-    box(0.8, S[1] + 0.8, 1.0, frameM, x + S[0] / 2, y + (S[1] + 0.8) / 2, z);
-    box(S[0] + 1.6, 0.8, 1.0, frameM, x, y + S[1] + 0.4, z);
-    rec.collider = World.addBox(x, y + S[1] / 2, z, S[0], S[1], S[2] + 0.5);
+    if (wood) {
+      /* two recessed panels + a brass knob on each face */
+      const inset = mat(new THREE.Color(col).multiplyScalar(0.82).getHex(), 0.75);
+      for (const zz of [1, -1]) {
+        for (const yy of [0.3, 0.72]) {
+          const p = new THREE.Mesh(geo(S[0] * 0.62, S[1] * 0.3, 0.08), inset);
+          p.position.set(S[0] / 2, S[1] * yy, zz * (S[2] / 2 + 0.03));
+          pivot.add(p);
+        }
+        const knob = new THREE.Mesh(new THREE.SphereGeometry(0.22, 10, 8), mat(0xd4a93a, 0.3, 0.8));
+        knob.position.set(S[0] - 0.55, S[1] * 0.47, zz * (S[2] / 2 + 0.2));
+        pivot.add(knob);
+      }
+    }
+    const frameM = wood ? mat(0xf2efe8, 0.7) : mat(0x37414f, 0.6);
+    const fw = wood ? 0.45 : 0.8, fd = S[2] + (wood ? 0.5 : 0.6);
+    for (const sx of [-1, 1]) {
+      const post = new THREE.Mesh(geo(fw, S[1] + fw, fd), frameM);
+      post.position.set(sx * (S[0] / 2 + fw / 2), (S[1] + fw) / 2, 0);
+      grp.add(post);
+    }
+    const lintel = new THREE.Mesh(geo(S[0] + fw * 2, fw, fd), frameM);
+    lintel.position.set(0, S[1] + fw / 2, 0);
+    grp.add(lintel);
+    const th = S[2] + 0.5;
+    rec.collider = alongZ ? World.addBox(x, y + S[1] / 2, z, th, S[1], S[0]) : World.addBox(x, y + S[1] / 2, z, S[0], S[1], th);
     rec.anim = 0;
+    const r2 = range * range;
+    let chk = 0, want = false;
     rec.tick = dt => {
-      let open;
-      if (e.plot) {
-        const near = Math.hypot(player.x - x, player.z - z) < 8;
-        open = GameLogic.myPlot(e.plot) && near;
-      } else open = true;
-      rec.anim += clamp((open ? 1 : 0) - rec.anim, -dt * 2.4, dt * 2.4);
-      pivot.rotation.y = rec.anim * 1.45;
-      rec.collider.enabled = rec.anim < 0.25;
+      chk -= dt;
+      if (chk <= 0) {                     /* who's near? (5x a second) */
+        chk = 0.2;
+        /* v18 PERF: a wood door is ~10 small meshes — past 90 studs it
+           can't be told apart from the wall, so skip drawing it */
+        grp.visible = (camera.position.x - x) ** 2 + (camera.position.z - z) ** 2 < 8100;
+        const nearMe = (player.x - x) ** 2 + (player.z - z) ** 2 < r2 && Math.abs(player.y - y) < S[1] + 2;
+        if (e.plot) want = GameLogic.myPlot(e.plot) && nearMe;
+        else {
+          const mode = GameLogic.doorMode || 'auto';
+          if (mode === 'open') want = true;
+          else if (mode === 'locked') want = false;
+          else {
+            want = nearMe;
+            if (!want) for (const r of MP.remotes.values())
+              if ((r.x - x) ** 2 + (r.z - z) ** 2 < r2 && Math.abs(r.y - y) < S[1] + 2) { want = true; break; }
+          }
+        }
+      }
+      /* the local player keeps it open while standing in it */
+      const inside = Math.abs(player.x - x) < (alongZ ? th : S[0]) / 2 + 0.9 && Math.abs(player.z - z) < (alongZ ? S[0] : th) / 2 + 0.9 &&
+        player.y < y + S[1] && player.y + 5 > y;
+      const open = want || (rec.anim > 0.2 && inside);
+      rec.anim += clamp((open ? 1 : 0) - rec.anim, -dt * 3, dt * 3.4);
+      pivot.rotation.y = easeOut(rec.anim) * 1.5 * dir;
+      rec.collider.enabled = rec.anim < 0.2;
     };
     rec.dispose = () => {
-      scene.remove(pivot);
+      scene.remove(grp);
       rec.collider.enabled = false;
       const ix = World.colliders.indexOf(rec.collider); if (ix >= 0) World.colliders.splice(ix, 1);
     };
   },
 
-  /* SIGN — text billboard on a post */
+  /* SWING SET — v18: a real playground swing. An A-frame with 1-3
+     seats; walk up, press E (or tap the prompt) to sit, hold W / S
+     (or the joystick) to pump, SPACE / jump to hop off (with a fling).
+     Each seat is a damped pendulum simulated by whoever sits on it
+     and streamed to the room ('wsw', 10 Hz) — same model as the
+     template world's tree swing. */
+  swing(rec, e, x, y, z) {
+    rec.kind = 'swing';
+    const n = Math.round(wlNum(e.seats, 1, 3, 2));
+    const L = wlNum(e.length, 4, 10, 7);
+    const ra = (+e.rot || 0) * Math.PI / 180, ca = Math.cos(ra), sa = Math.sin(ra);
+    const SEAT_H = 2.4, pivotY = L + SEAT_H, gap = 4.4, span = n * gap;
+    const grp = new THREE.Group();
+    grp.position.set(x, y, z); grp.rotation.y = ra;
+    scene.add(grp);
+    const frameM = mat(wlIsHex(e.color) ? wlHex(e.color) : 0x2f6fb5, 0.5, 0.4);
+    const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, span + 1.2, 8), frameM);
+    bar.rotation.z = Math.PI / 2; bar.position.y = pivotY + 0.2; bar.castShadow = true;
+    grp.add(bar);
+    const legLen = Math.hypot(pivotY + 0.2, 2.6), tilt = Math.atan2(2.6, pivotY + 0.2);
+    const legG = new THREE.CylinderGeometry(0.24, 0.3, legLen, 8);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+      const leg = new THREE.Mesh(legG, frameM);
+      leg.position.set(sx * (span / 2 + 0.5), (pivotY + 0.2) / 2, sz * 1.3);
+      leg.rotation.x = sz * tilt; leg.castShadow = true;
+      grp.add(leg);
+    }
+    const toW = (lx, lz) => [x + lx * ca + lz * sa, z - lx * sa + lz * ca];
+    const cols = [];
+    for (const sx of [-1, 1]) {
+      const [wx, wz] = toW(sx * (span / 2 + 0.5), 0);
+      cols.push(World.addBox(wx, y + pivotY / 2, wz, 0.7, pivotY, 0.7));
+    }
+    const ropeM = mat(0x3b3b3b, 0.8), seatM = mat(0xC4281C, 0.7);
+    const ropeG = new THREE.CylinderGeometry(0.06, 0.06, L, 5);
+    rec.seats = [];
+    const its = [];
+    for (let i = 0; i < n; i++) {
+      const lx = (i - (n - 1) / 2) * gap;
+      const sg = new THREE.Group();
+      sg.position.set(lx, pivotY, 0);
+      grp.add(sg);
+      for (const rx of [-0.95, 0.95]) {
+        const rope = new THREE.Mesh(ropeG, ropeM);
+        rope.position.set(rx, -L / 2, 0); sg.add(rope);
+      }
+      const seat = new THREE.Mesh(geo(2.3, 0.26, 1.0), seatM);
+      seat.position.y = -L; seat.castShadow = true; sg.add(seat);
+      const st = { i, lx, g: sg, angle: 0, vel: 0, occ: null, net: null, pump: 0, settle: 0, sync: 0 };
+      rec.seats.push(st);
+      const seatPos = (ang) => {
+        const lz = Math.sin(ang) * L;
+        const [wx, wz] = toW(lx, lz);
+        return [wx, y + pivotY - Math.cos(ang) * L + 0.17, wz];
+      };
+      const release = () => {
+        if (st.occ === MP.id) { st.occ = null; st.pump = 0; WS.emit('stand', {}); }
+      };
+      st.ctl = {
+        update(dt) {
+          st.pump = clamp((tmpV.x * sa + tmpV.z * ca) * 1.6, -1, 1);
+          if (st.settle > 0) { st.settle -= dt; cam.yaw += angWrap(Math.PI + ra - cam.yaw) * Math.min(1, dt * 3); }
+          const p = seatPos(st.angle);
+          player.x = p[0]; player.y = p[1]; player.z = p[2];
+          player.vx = player.vy = player.vz = 0;
+          yaw = ra;
+          character.rotation.y = yaw;
+          character.position.set(player.x, player.y, player.z);
+          setAnim('sit', 0.3);
+        },
+        exit() {
+          const tang = Math.cos(st.angle) * L * st.vel;
+          let vh = tang, vy = Math.sin(st.angle) * L * st.vel + 9;
+          const sp = Math.hypot(vh, vy);
+          if (sp > 34) { vh *= 34 / sp; vy *= 34 / sp; }
+          player.vx = sa * vh; player.vy = vy; player.vz = ca * vh;
+          release();
+        },
+        detach() { release(); }
+      };
+      const [ix, iz] = toW(lx, 0);
+      its.push(addInteractable({
+        x: ix, y: y + SEAT_H + 1.2, z: iz, radius: 3.6,
+        label: 'Sit on the swing',
+        enabled: () => GameLogic.active && !seated && !st.occ,
+        action: () => {
+          if (seated || st.occ) return;
+          st.occ = MP.id; st.settle = 1.4;
+          seated = true; seatCtl = st.ctl;
+          Inventory.unequip();
+          emote = { name: 'sit', t: 0 };
+          setAnim('sit', 0.3);
+          WS.emit('sit', { r: 'wsw', e: rec.id, s: i });
+          addSys('You sit on the swing \u2014 hold <b>W / S</b> to pump, <b>SPACE</b> to hop off.');
+        }
+      }));
+    }
+    rec.tick = dt => {
+      for (const st of rec.seats) {
+        const mine = st.occ === MP.id;
+        const fresh = st.net && (elapsed - st.net.at) < 0.4;
+        if (mine || !fresh) {
+          let acc = -(34 / L) * Math.sin(st.angle) - st.vel * 0.07;
+          const pump = mine ? st.pump : 0;
+          if (pump && (pump * st.vel > 0 || Math.abs(st.vel) < 0.2)) acc += pump * 4.5;
+          st.vel = clamp(st.vel + acc * dt, -3.2, 3.2);
+          st.angle += st.vel * dt;
+          if (Math.abs(st.angle) > 1.42) { st.angle = clamp(st.angle, -1.42, 1.42); st.vel *= -0.3; }
+        } else {
+          st.vel = st.net.v;
+          const pa = st.net.a + st.net.v * (elapsed - st.net.at);
+          st.angle += (pa - st.angle) * Math.min(1, dt * 10);
+        }
+        if (mine && MP.connected) {
+          st.sync -= dt;
+          if (st.sync <= 0) { st.sync = 0.1; WS.emit('wsw', { e: rec.id, s: st.i, a: +st.angle.toFixed(3), v: +st.vel.toFixed(3) }); }
+        }
+        st.g.rotation.x = -st.angle;
+      }
+    };
+    rec.dispose = () => {
+      for (const st of rec.seats) if (st.occ === MP.id && seatCtl === st.ctl) { seatCtl = null; seated = false; }
+      for (const it of its) { const k = Interactables.indexOf(it); if (k >= 0) Interactables.splice(k, 1); }
+      for (const c of cols) { c.enabled = false; const k = World.colliders.indexOf(c); if (k >= 0) World.colliders.splice(k, 1); }
+      scene.remove(grp);
+    };
+  },
+
+  /* SIGN — v18: no more giant always-facing billboards. Three looks:
+       "board" (default) a real wooden signboard on two posts, fixed in
+               the world (faces `rot`), text painted on both faces
+       "wall"  the same board with no posts — a plaque / shop sign;
+               pos is the board's CENTER
+       "float" a small, subtle floating label (fades out with distance) */
   sign(rec, e, x, y, z) {
     rec.kind = 'sign';
-    const S = wlNum(e.width, 3, 24, 10);
-    solid(0.6, 4.2, 0.6, mat(0x624732, 0.85), x, y + 2.1, z);
     const lines = (Array.isArray(e.lines) ? e.lines : [e.text || '...']).slice(0, 4);
-    const spr = wlTextSprite(lines, { width: S, W: 640, H: 320, bigSize: 40, smallSize: 34, bg: 'rgba(20,26,34,0.88)' });
-    spr.position.set(x, y + 6.4, z);
-    scene.add(spr);
-    rec.dispose = () => { scene.remove(spr); };
-  }
+    const style = e.style === 'float' || e.style === 'wall' ? e.style : 'board';
+    if (style === 'float') {
+      const spr = wlFloatText(lines, { width: wlNum(e.width, 2, 12, 4.4), range: wlNum(e.range, 15, 200, 55) });
+      spr.position.set(x, y + wlNum(e.height, 0, 40, 2.2), z);
+      scene.add(spr);
+      rec.dispose = () => wlDropFloater(spr);
+      return;
+    }
+    const W = wlNum(e.width, 2, 24, 5.5);
+    const H = Math.min(W * 0.9, 0.5 + lines.length * 0.75);
+    const boardHex = wlIsHex(e.color) ? e.color : '#6b4a2e';
+    const textHex = wlIsHex(e.textColor) ? e.textColor : '#fff4dc';
+    const CW = 512, CH = Math.max(64, Math.round(CW * H / W));
+    const c = document.createElement('canvas'); c.width = CW; c.height = CH;
+    const g = c.getContext('2d');
+    g.fillStyle = boardHex; g.fillRect(0, 0, CW, CH);
+    g.strokeStyle = 'rgba(255,255,255,0.28)'; g.lineWidth = 8; g.strokeRect(10, 10, CW - 20, CH - 20);
+    g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = textHex;
+    const lh = (CH - 30) / lines.length;
+    lines.forEach((ln, i) => {
+      const fs = Math.min(lh * (i === 0 ? 0.72 : 0.6), i === 0 ? 96 : 70);
+      g.font = (i === 0 ? 'bold ' : '600 ') + Math.round(fs) + 'px "Trebuchet MS", "Segoe UI", sans-serif';
+      g.fillText(String(ln).slice(0, 40), CW / 2, 15 + lh * (i + 0.5), CW - 40);
+    });
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
+    const faceM = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.8 });
+    const edgeM = mat(wlHex(boardHex, 0x6b4a2e), 0.85);
+    const grp = new THREE.Group();
+    grp.position.set(x, y, z);
+    grp.rotation.y = (+e.rot || 0) * Math.PI / 180;
+    const lift = style === 'wall' ? 0 : wlNum(e.height, 0.5, 12, 3);
+    const boardY = style === 'wall' ? 0 : lift + H / 2;
+    const board = new THREE.Mesh(new THREE.BoxGeometry(W, H, 0.25), [edgeM, edgeM, edgeM, edgeM, faceM, faceM]);
+    board.position.y = boardY; board.castShadow = true;
+    grp.add(board);
+    if (style === 'board') {
+      const postM = mat(0x4a3423, 0.85);
+      for (const sx of [-1, 1]) {
+        const p = new THREE.Mesh(geo(0.3, lift + H + 0.2, 0.3), postM);
+        p.position.set(sx * (W / 2 - 0.35), (lift + H + 0.2) / 2, -0.2);
+        p.castShadow = true; grp.add(p);
+      }
+    }
+    scene.add(grp);
+    rec.dispose = () => {
+      scene.remove(grp);
+      board.geometry.dispose(); tex.dispose(); faceM.dispose();
+    };
+  },
+
 };
 let GL_DROP_SEQ = 1, GL_ZSEQ = 1;
 
@@ -6263,6 +6737,17 @@ function respawn() {
   player.y = cp ? cp.y + 0.4 : WORLDS_SPAWN.y;
   player.vx = player.vy = player.vz = 0;
   health = V.maxHealth; timeSinceHurt = 99;
+  /* v18: worlds with vars.loseOnDeath drop their weapons on death —
+     you re-arm at your reclaim stands (built-in items stay) */
+  if (GameLogic.active && GameLogic.loseOnDeath) {
+    const pre = GameLogic.worldId + '.';
+    let lost = 0;
+    for (let i = 0; i < Inventory.slots.length; i++) {
+      const it = Inventory.slots[i];
+      if (it && it.id.startsWith(pre)) { Inventory.consume(i); lost++; }
+    }
+    if (lost) setTimeout(() => wlToast('You dropped your weapons \u2014 grab them again at your armory'), 400);
+  }
   if (seatCtl && seatCtl.detach) seatCtl.detach();   // leave any ride seat cleanly
   seatCtl = null;
   seated = false; climbing = false; ladderLatch = 0; speed = 0;
@@ -6812,6 +7297,7 @@ function worldLeader() {
    zombies to the new leader (everyone computes the same one, so
    exactly one screen adopts and starts simulating + broadcasting) */
 function onPlayerLeft(id) {
+  wlFreeSwingSeats(id);
   if (SWING && SWING.occupant === id) SWING.occupant = null;
   if (MGR) for (const s of MGR.seats) if (s.occupant === id) s.occupant = null;
   if (CHAIR && CHAIR.occ === id) CHAIR.occ = null;
@@ -6822,12 +7308,29 @@ function onPlayerLeft(id) {
 }
 
 /* ---- the world event handlers (see the table above) ---- */
+/* v18: world swing sets (the 'swing' entity) */
+function wlSwingSeat(eid, si) {
+  const r = GameLogic.byId && GameLogic.byId.get(String(eid));
+  return r && r.kind === 'swing' && r.seats ? r.seats[si | 0] || null : null;
+}
+function wlFreeSwingSeats(id) {
+  if (!GameLogic.entities) return;
+  for (const r of GameLogic.entities) if (r.kind === 'swing') for (const st of r.seats) if (st.occ === id) { st.occ = null; st.net = null; }
+}
+WS.on('wsw', (d, from) => {
+  const st = wlSwingSeat(d.e, d.s);
+  if (!st || st.occ === MP.id) return;
+  st.occ = from;
+  st.net = { a: clamp(+d.a || 0, -1.5, 1.5), v: clamp(+d.v || 0, -4, 4), at: elapsed };
+});
 WS.on('sit', (d, from) => {
+  if (d.r === 'wsw') { const st = wlSwingSeat(d.e, d.s); if (st && st.occ !== MP.id) st.occ = from; return; }
   if (d.r === 'swg' && SWING) SWING.occupant = from;
   else if (d.r === 'mgr' && MGR && MGR.seats[d.s]) MGR.seats[d.s].occupant = from;
   else if (d.r === 'chair' && CHAIR) CHAIR.occ = from;
 });
 WS.on('stand', (d, from) => {
+  wlFreeSwingSeats(from);
   if (SWING && SWING.occupant === from) SWING.occupant = null;
   if (MGR) for (const s of MGR.seats) if (s.occupant === from) s.occupant = null;
   if (CHAIR && CHAIR.occ === from) CHAIR.occ = null;

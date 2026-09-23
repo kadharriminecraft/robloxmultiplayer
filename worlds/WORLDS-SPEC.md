@@ -399,18 +399,36 @@ A spinning floating item anyone can grab (E). Hidden once taken;
 
 ### 7.13 `door`
 ```json
-{ "id": "vault", "type": "door", "pos": [0, "ground", 5],
-  "size": [7, 7, 0.6], "color": "#7fd0ff", "plot": "plot-ne" }
+{ "id": "door-1", "type": "door", "style": "wood", "pos": [24, 13, -130.5],
+  "size": [5, 8, 0.5], "rot": 0, "swing": 1, "range": 7, "color": "#7a5230" }
 ```
-A swinging translucent door. With `plot` it opens for the plot owner
-as they approach; with `requires` it opens forever once bought.
+A real hinged door with a frame (v18). `style` `"wood"` (solid panel,
+recessed insets, brass knobs) or `"glass"` (translucent, the default).
+`rot` 0/90/180/270 turns the whole door (the collider follows);
+`swing` 1 opens toward local −z (into a house whose front faces +z),
+−1 the other way; `range` 3-20 studs.
+Without `plot` it opens AUTOMATICALLY when anyone (you or any remote
+player) walks up and shuts behind them — every house in Maple Grove
+works this way. With `plot` it opens only for the plot owner; with
+`requires` it opens forever once bought. Admins can force every public
+door with `Game.setDoors('open'|'locked'|'auto')`. Doors further than
+90 studs from the camera are not drawn (phone performance).
+Entity sizes are 0.5-120 on every axis.
 
 ### 7.14 `sign`
 ```json
-{ "id": "sign-welcome", "type": "sign", "pos": [0, "ground", -8.2],
-  "lines": ["GOLD RUSH TYCOON", "Claim a plot!"], "width": 13 }
+{ "id": "st-maple", "type": "sign", "style": "board", "pos": [-104, 12, -84],
+  "rot": 0, "lines": ["Maple St"], "width": 6, "height": 7,
+  "color": "#1f7a4a", "textColor": "#ffffff" }
 ```
-A billboard on a post, up to 4 lines, always facing the reader.
+Signs are decoration, never UI clutter (v18). Styles:
+- `"float"` — small outlined text floating in the air, fades out past
+  `range` studs (use for ONE world title, not everywhere).
+- `"board"` — a real board on two posts; `height` = how high the board
+  sits (0.5-12), `width` 2-24. Text is printed on both faces.
+- `"wall"` — a plaque mounted flat: `pos` is the board CENTER; put it a
+  hair in front of a wall (store fronts, "ARMORY" plaques).
+`rot` sets which way the board plane faces (0 = faces ±z). Up to 4 lines.
 
 ### 7.15 `claimer` — the MONEY VAULT plate (v16)
 ```json
@@ -437,6 +455,34 @@ zspawn channel, so every screen agrees. **Spammable** as long as you
 can pay; the room's zombie cap (`vars.maxZombies`, §3) is the only
 brake. Kills pay `reward` to the killer. With this you control when
 zombies exist at all — no default spawning.
+
+---
+
+### 7.17 `swing` — a playground swing set (v18)
+```json
+{ "id": "swing-a", "type": "swing", "pos": [16, 12, -38], "seats": 3,
+  "length": 7, "rot": 0, "color": "#2f6fb5" }
+```
+An A-frame with 1-3 seats (`length` 4-10 = rope length). Walk up and
+press **E** (or tap the prompt) to sit, hold **W / S** to pump, **SPACE**
+to hop off with a fling. Each seat is a damped pendulum simulated by
+its rider and streamed to the room, so everyone sees you swing.
+
+### 7.18 Weapon stands that you keep (`button.reclaim`, `vars.loseOnDeath`) (v18)
+```json
+{ "id": "ne-arm-steel-sword", "type": "button", "plot": "plot-ne",
+  "give": "steel-sword", "cost": 100, "reclaim": true, "pos": [112, 12.6, -76] }
+```
+A `give` button with `reclaim: true` is a weapon STAND: pay once, and
+from then on stepping on it re-equips the item for free whenever you
+don't already carry it. Pair it with `"vars": { "loseOnDeath": true }`
+— dying clears your tools, you walk back to your armory and grab them
+again. The stand keeps its display case (hidden past 95 studs).
+
+### 7.19 Orphan plots (v18)
+A claim whose owner is no longer in the room (a stale save, a crashed
+tab) is released automatically ~7 s after you connect, so plots are
+never stuck "owned" by ghosts.
 
 ---
 
@@ -496,6 +542,14 @@ the live stats · `Game.zombies(n, x, z, r)` — spawn a wave around a
 point · `Game.resetWorld()` — broadcast a full reset ·
 `Game.resetPlot(plotId)`.
 
+**v18 world-admin API:** `Game.isAdmin()` (me, verified by the relay
+admin code) / `Game.isAdmin(fromId)` — trust an `onNet` message only
+when the SENDER is an admin · `Game.setTime(h)` (local sky; broadcast
+it to apply for everyone) · `Game.setDoors('open'|'locked'|'auto')` ·
+`Game.adminBuy(buttonId)` · `Game.buttons(plotId?)` · `Game.myPlots()` ·
+`Game.items()` · `Game.pos()`. Both shipped worlds implement
+admin-only chat commands this way (`/help` lists them).
+
 **Rules the linter enforces (the script is REJECTED if it uses any):**
 `fetch XMLHttpRequest WebSocket localStorage sessionStorage indexedDB
 document window globalThis self top parent location navigator eval
@@ -525,13 +579,14 @@ Everything is checked on load; ANY failure = the world never appears
    `sword|gun|consumable|tool`; stats within §4 ranges (tools:
    speed/jump 1-3, pet radius 8-60, zapRange 4-30); mesh colors hex;
    mesh.style ∈ `coil|minigun|pet`; icons from the §4 whitelist.
-6. `build` ≤ 400 parts; pos `[-1000..1000, -200..500 | "ground",
-   -1000..1000]`; sizes 0.1-220; material/shape from the lists;
+6. `build` ≤ 1500 parts (v18 — static parts are merged per material, so
+   parts are cheap; gated parts merge per `requires` group); pos `[-1000..1000, -200..500 | "ground",
+   -1000..1000]`; sizes 0.1-420 on x/z, 0.1-220 on y; wedges/boxes take `rot`; material/shape from the lists;
    repeat `[1-40, ±500, ±500]`.
 7. `economy`: name ≤ 16, symbol ≤ 3 chars, start/goal 0-10^9, icon
    whitelisted, `queue` 1-6. `vars` (optional): `maxZombies` 1-40
-   (applied on load, restored on world exit).
-8. `logic` ≤ 160; unique ids; per-type fields within §7 ranges; every
+   (applied on load, restored on world exit); `loseOnDeath` boolean.
+8. `logic` ≤ 320; unique ids; per-type fields within §7 ranges; every
    `requires`/`plot`/`give`/`shop`/`pickup` reference must EXIST;
    `patch` keys must be §7.2-whitelisted fields on patchable types;
    npc lines ≤ 6 × 140 chars; shops ≤ 8 entries; button `order` 1-9999;
@@ -551,21 +606,24 @@ Everything is checked on load; ANY failure = the world never appears
       then used Admin → Server → **Reset World Progress** to test day
       one again.
 
-## 12. The reference game — tycoon-world.json
+## 12. The reference games
 
-`tycoon-world.json` in this folder is a complete, commented-by-shape
-example of every v16 feature: a perfectly flat 320×320 arena walled
-by a blocky stone `border` mountain ring, a CLEAN central battlefield
-(no clutter, no default zombies — just the **$500 zombie-wave skull
-pad** and a ring of 8 **weapon cases** you step on to buy), 4 BIG
-46×46 plots with a 36×30 two-story fortress shell, a day-one state of
-base plate + claim door + conveyor belt ONLY, a **max-4 buy-pad
-queue** per plot (`order` + `economy.queue`) that pops the next pad
-in as you progress, droppers that spout OVER the belt (`dropOff`)
-into the collector → the plot's **MONEY VAULT plate** (owner sweeps,
-raiders skim 25% with a 60s seal), a 10-button upgrade tree (FREE
-dropper → faster/2nd/3rd droppers → walls → taller walls + towers →
-2nd floor + stairs → MEGA dropper → roof fortress → DIAMOND
-dropper), `vars.maxZombies: 24`, auto plot reset when an owner
-leaves, admin chat commands (`/money /give /weapon /pet /zombies
-/reset /help`), and the `$40,000` goal. Copy it, reskin it, ship it.
+**tycoon-world.json — Gold Rush Tycoon (v18).** A flat 400×400 arena in
+a stone border ring. Four HUGE 64×64 two-storey bases (22-stud ground
+floor, 20-stud upper floor — high ceilings for the 3rd-person camera)
+at the corners of a central plaza with the $500 zombie-wave skull. The
+base doorway faces the boulevard and only the owner can walk through
+it. 12 ordered buy-pads (queue of 4): FREE dropper → faster drops → 2nd
+dropper → walls → 3rd dropper → 2nd floor + stairs → MEGA → upper walls
+→ roof + towers → DIAMOND → income ×1.5 → ×2. Every base has an ARMORY
+wall of reclaim weapon stands (§7.18, `loseOnDeath` on). Admin
+commands: `/help /money /setmoney /give /weapons /weapon /pet /zombies
+/unlock /heal /tp /resetplot /reset /time /announce`.
+
+**neighborhood-world.json — Maple Grove (v18).** A LIFE-SIZE suburb
+(~3 studs per metre): two streets + two avenues with sidewalks, lamps
+and parked cars, 20 houses you can walk into (auto wood doors, living
+room, bedroom, kitchen), a corner store with a glass door, a basketball
+court and a big park (fountain, pond, slide, two working swing sets).
+Admin commands: `/help /tp house 1-20|park|store|court|pond|swings|spawn
+/time /doors open|close|auto /party /heal /announce`.
