@@ -1,8 +1,18 @@
 /* ============================================================
-   BASEPLATE MULTIPLAYER RELAY v6 — worlds + game-state persistence
+   BASEPLATE MULTIPLAYER RELAY v7 — worlds + game-state persistence
    ------------------------------------------------------------
    This is the code for the worker at:
      robloxmultiplayer.kadharri-minecraft.workers.dev
+
+   WHY v7?  v16 of the game added per-plot vaults and auto-resets:
+
+     - 'tyc' {t:'bank', p, v} — the plot vault balance rides the
+       stored state too, so joiners see real vault totals.
+     - 'tyc' {t:'pr', e, ids} — a PLOT reset (the owner left).
+       Clears the claim, its button buys and the vault, so a plot
+       can't resurrect for the next joiner after its owner left.
+       (Old v6 clients still send the old event mix and keep
+       working — v7 simply understands two more.)
 
    WHY v6?  v5 gave every world its own room and stored room rules.
    v14 of the game turned world files into full GAMES (tycoons with
@@ -396,21 +406,35 @@ export class MyDurableObject {
      Compact map, capped so a runaway world can't bloat storage:
        b  { buttonId: 1 }        bn { buttonId: buyCount }
        c  { plotId: {i, n} }     pk { pickupId: 1 }
-     'tyc' {t:'r'} from an admin resets everything. */
+       k  { plotId: vaultMoney }                    (v7: vaults)
+     'tyc' {t:'r'} from an admin resets everything.
+     'tyc' {t:'pr'} clears one plot (owner left).   (v7) */
   async _gameApply(d, from) {
     if (!d || typeof d !== 'object') return;
     if (d.t === 'r') { await this.state.storage.delete('gstate').catch(() => {}); return; }
-    if (d.t !== 'b' && d.t !== 'c' && d.t !== 'pk') return;
+    if (d.t === 'pr' && typeof d.e === 'string') {
+      let g = await this.state.storage.get('gstate').catch(() => null);
+      if (!g || typeof g !== 'object') return;              // nothing stored yet
+      if (!g.b) g.b = {}; if (!g.bn) g.bn = {}; if (!g.c) g.c = {}; if (!g.pk) g.pk = {}; if (!g.k) g.k = {};
+      delete g.c[d.e];
+      delete g.k[d.e];
+      if (Array.isArray(d.ids)) for (const id of d.ids) { delete g.b[id]; delete g.bn[id]; delete g.pk[id]; }
+      await this.state.storage.put('gstate', g).catch(() => {});
+      return;
+    }
+    if (d.t !== 'b' && d.t !== 'c' && d.t !== 'pk' && d.t !== 'bank') return;
     let g = await this.state.storage.get('gstate').catch(() => null);
     if (!g || typeof g !== 'object') g = { b: {}, bn: {}, c: {}, pk: {} };
-    if (!g.b) g.b = {}; if (!g.bn) g.bn = {}; if (!g.c) g.c = {}; if (!g.pk) g.pk = {};
+    if (!g.b) g.b = {}; if (!g.bn) g.bn = {}; if (!g.c) g.c = {}; if (!g.pk) g.pk = {}; if (!g.k) g.k = {};
     if (d.t === 'b') { g.b[d.e] = 1; g.bn[d.e] = (g.bn[d.e] || 0) + 1; }
     else if (d.t === 'c') g.c[d.e] = { i: String(from || '').slice(0, 64), n: String(d.n || 'Player').slice(0, 20) };
     else if (d.t === 'pk') g.pk[d.e] = 1;
+    else if (d.t === 'bank' && typeof d.p === 'string') g.k[d.p] = Math.max(0, Math.round(+d.v || 0));   // v7: vault total
     if (Object.keys(g.b).length > 400) g.b = Object.fromEntries(Object.entries(g.b).slice(-400));
     if (Object.keys(g.bn).length > 400) g.bn = Object.fromEntries(Object.entries(g.bn).slice(-400));
     if (Object.keys(g.c).length > 60) g.c = Object.fromEntries(Object.entries(g.c).slice(-60));
     if (Object.keys(g.pk).length > 300) g.pk = Object.fromEntries(Object.entries(g.pk).slice(-300));
+    if (Object.keys(g.k).length > 80) g.k = Object.fromEntries(Object.entries(g.k).slice(-80));
     await this.state.storage.put('gstate', g).catch(() => {});
   }
 
