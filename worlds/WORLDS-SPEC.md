@@ -33,7 +33,7 @@ v2 world is a place **plus a game**:
   "build":   [ … ],                     // §5 — static parts (walls, floors…)
   "economy": { … },                     // §6 — money (+ queue: visible pads)
   "logic":   [ … ],                     // §7 — the live entities
-  "vars":    { … },                     // v16 — engine overrides (maxZombies)
+  "vars":    { … },                     // v16 — engine overrides · v20 — vars.rules = this world's room rules
   "script":  "…"                        // §9 — optional sandboxed JS
 }
 ```
@@ -304,7 +304,7 @@ queued.
 ```json
 { "id": "ne-drop1", "type": "dropper", "pos": [8, "ground", 2],
   "plot": "plot-ne", "every": 4, "value": 5, "requires": ["plot-ne"],
-  "color": "#4a5568", "dropOff": [0, 3.2],
+  "tier": 3, "color": "#4a5568", "dropOff": [0, 3.2],
   "drop": { "color": "#f5c542", "size": 0.95 } }
 ```
 Stands beside your conveyor and drops a gold cube every `every`
@@ -312,6 +312,16 @@ seconds — **but only while the plot owner is in the world** (their
 client simulates it; income pauses when they leave — classic tycoon
 rules). `value` is what the collector pays per drop; `drop` styles
 the cube.
+
+**v20 `tier: 1-5`** — which MACHINE this is: 1 Classic (gray box),
+2 Twin (blue-steel, twin feed pipes), 3 Turbo (amber + hazard
+stripes + spinning fan), 4 MEGA (big purple rig, rotating core),
+5 Diamond (cyan crystal). Omit `tier` and it is read from the id
+(`mega`→4, `diamond`→5, `drop2/3`→2/3).
+
+**v20: droppers are GATED like buildings** — a dropper with
+`requires` is invisible (and collider-free) until bought. Only your
+starter dropper appears with the plot; the rest must be bought.
 
 **v16 `dropOff: [ox, oz]` (WORLD-axis offset, ±8)** — where the spout
 releases the ore, relative to the machine. Put the offset over the
@@ -535,6 +545,31 @@ door a press-E / tap-the-prompt door: "Open door" / "Close door". The
 state is a synced toggle, so a door you open is open for everyone.
 Admin door modes (`/doors`, `Game.setDoors`) still override it.
 
+### 7.25 `car` — NPC traffic that yeets players (v20)
+```json
+{ "id": "car-red", "type": "car", "pos": [-125.5, 12.2, 105.5],
+  "wps": [[-125.5, 105.5], [125.5, 105.5], [125.5, -105.5], [-125.5, -105.5]],
+  "speed": 17, "color": "#C4281C", "driver": "#2f6fb3", "damage": 25,
+  "phase": 240 }
+```
+A blocky Roblox car with an NPC driver looping the `wps` waypoint
+circuit (3-40 `[x, z]` points; the loop closes itself). Every screen
+simulates its own copy with the phase taken from the wall clock, so
+traffic never needs syncing and never drifts apart. `speed` 4-40
+studs/s, `phase` staggers cars around their loop, `color`/`driver`
+style it. Clip one and it flings you down the road with the full
+Roblox tumble — `damage` is the hit.
+
+### 7.26 `vars.rules` — this world's room rules (v20)
+```json
+"vars": { "rules": { "fallDamage": false, "knockback": 22 } }
+```
+A world can preset its own ROOM RULES — any subset of the admin
+Rules tab (gravity, speeds, damage, knockback, smite tuning,
+zombies...). Entering the world applies them (the Rules tab shows
+"<world> preset"); admin tweaks still broadcast live and the relay
+keeps them per room, so admin > world > factory defaults.
+
 ---
 
 ## 8. How it all syncs (multiplayer model)
@@ -656,19 +691,21 @@ Everything is checked on load; ANY failure = the world never appears
    `sword|gun|consumable|tool`; stats within §4 ranges (tools:
    speed/jump 1-3, pet radius 8-60, zapRange 4-30); mesh colors hex;
    mesh.style ∈ `coil|minigun|pet`; icons from the §4 whitelist.
-6. `build` ≤ 1500 parts (v18 — static parts are merged per material, so
+6. `build` ≤ 2500 parts (v20 — static parts are merged per material, so
    parts are cheap; gated parts merge per `requires` group); pos `[-1000..1000, -200..500 | "ground",
    -1000..1000]`; sizes 0.1-420 on x/z, 0.1-220 on y; wedges/boxes take `rot`; material/shape from the lists;
    repeat `[1-40, ±500, ±500]`.
 7. `economy`: name ≤ 16, symbol ≤ 3 chars, start/goal 0-10^9, icon
    whitelisted, `queue` 1-6. `vars` (optional): `maxZombies` 1-40
-   (applied on load, restored on world exit); `loseOnDeath` boolean.
+   (applied on load, restored on world exit); `loseOnDeath` boolean;
+   `doors` `auto|manual`; `rules` = room-rule presets (§7.26).
 8. `logic` ≤ 320; unique ids; per-type fields within §7 ranges; every
    `requires`/`plot`/`give`/`shop`/`pickup` reference must EXIST;
    `patch` keys must be §7.2-whitelisted fields on patchable types;
    npc lines ≤ 6 × 140 chars; shops ≤ 8 entries; button `order` 1-9999;
    dropper `dropOff` two × ±8; claimer `steal` 0.05-0.9 / `cool` 5-600;
-   zwave `cost` 0-10^9 / `count` 1-8 / `radius` 10-120 / `reward` 0-10^4.
+   zwave `cost` 0-10^9 / `count` 1-8 / `radius` 10-120 / `reward` 0-10^4;
+   car `wps` 3-40 × ±1000 / `speed` 4-40 / `damage` 1-200.
 9. `script` ≤ 20000 chars and lint-clean (§9).
 
 ## 11. Publishing checklist
