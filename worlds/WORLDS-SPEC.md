@@ -202,7 +202,13 @@ players buy buttons (or claim plots):
   axis-aligned; for walkable slopes use stepped boxes — the engine
   auto-steps 1.5 studs).
 - `repeat` clones the part `count` times, each `dx`/`dz` studs apart —
-  fences, columns, walls.
+  fences, columns, walls. Every clone shares the height resolved at
+  `pos` (so a `"ground"` row follows the surface under the FIRST clone).
+- `"ground"` = the top of the highest collidable surface under `pos`
+  (terrain OR any collidable part listed earlier in `build[]`), then
+  `lift` is added to get the part's CENTER. Parts stack: a part listed
+  after a slab it sits on starts at the slab's top. Every size axis
+  must be at least 0.1.
 - `requires` may name buttons AND claims (§7). Gated parts pop in
   with a scale animation on every screen the moment the requirement
   completes.

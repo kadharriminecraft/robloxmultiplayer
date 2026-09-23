@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Baseplate — v14</title>
+<title>Baseplate — v17</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@600;700;800&display=swap" rel="stylesheet">
 <style>
@@ -3294,7 +3294,7 @@ const WL_ICONS = new Set(['coins', 'gem', 'star', 'crown', 'trophy', 'medal',
   'gift', 'box', 'key', 'lock', 'anchor', 'leaf', 'droplet', 'flask',
   'flask-conical', 'briefcase', 'banknote', 'circle-dollar-sign', 'store',
   'pocket-knife', 'wrench', 'gauge', 'mountain', 'castle', 'skull']);
-const WL_LINT = /\b(?:fetch|XMLHttpRequest|WebSocket|localStorage|sessionStorage|indexedDB|document|window|globalThis|self|top|parent|location|navigator|eval|Function|import|postMessage|Worker|crypto|Date|setTimeout|setInterval|requestAnimationFrame|alert|confirm|prompt)\b/;
+const WL_LINT = /\b(?:fetch|XMLHttpRequest|WebSocket|localStorage|sessionStorage|indexedDB|document|window|globalThis|self|top|parent|location|navigator|eval|Function|import|postMessage|Worker|crypto|Date|setTimeout|setInterval|requestAnimationFrame|alert|confirm|prompt|constructor|__proto__|prototype|getPrototypeOf|Reflect|Proxy|arguments)\b/;   // v17: + the constructor-chain escape (x.constructor.constructor('…')). A lint, not a true sandbox — only load world scripts you trust (your own repo).
 /* which fields a button's `patch` may retune on other entities */
 const WL_PATCHABLE = {
   dropper: ['every', 'value'],
@@ -3537,8 +3537,10 @@ const GameLogic = {
     registerWorldItems(recipe);          // §8: custom weapons into ITEM_DEFS
 
     /* 1. build parts (gated ones wait for their buttons) */
+    this._static = [];
     if (Array.isArray(recipe.build))
       for (const p of recipe.build) this.buildPart(p);
+    this.mergeStatic();                  // v17: one draw per material instead of per face
 
     /* 2. entities */
     if (Array.isArray(recipe.logic))
@@ -3673,24 +3675,29 @@ const GameLogic = {
     const shape = p.shape || 'box';
     const material = p.material || 'plastic';
     let mtl;
-    if (material === 'neon') {
-      mtl = new THREE.MeshStandardMaterial({ color: new THREE.Color(color).multiplyScalar(0.22), emissive: color, emissiveIntensity: 1.05, roughness: 0.4 });
+    if (material === 'neon') {       // v17: cached per color (shared = mergeable, fewer programs)
+      mtl = matCache.get('wn' + color);
+      if (!mtl) matCache.set('wn' + color, mtl = new THREE.MeshStandardMaterial({ color: new THREE.Color(color).multiplyScalar(0.22), emissive: color, emissiveIntensity: 1.05, roughness: 0.4 }));
     } else if (material === 'glass') {
-      mtl = new THREE.MeshStandardMaterial({ color, roughness: 0.12, transparent: true, opacity: 0.38 });
+      mtl = matCache.get('wg' + color);
+      if (!mtl) matCache.set('wg' + color, mtl = new THREE.MeshStandardMaterial({ color, roughness: 0.12, transparent: true, opacity: 0.38 }));
     } else if (material === 'metal') {
       mtl = mat(color, 0.3, 0.85, 1.0);
     } else if (material === 'wood') {
       mtl = mat(color, 0.85, 0, 0.2);
     } else mtl = studMats(color, 0.75);
 
+    /* v17 fix: resolve the height ONCE, before any clone adds its own
+       collider — resolving per clone found clone 0's top at pos and
+       stacked every later clone on the one before (towers of fences) */
+    const cy = this.resolveY(p.pos, 1) + (p.lift || 0);
     for (let k = 0; k < clones; k++) {
       const cx = p.pos[0] + dx * k, cz = p.pos[2] + dz * k;
-      const cy = this.resolveY(p.pos, 1) + (p.lift || 0) + (clones > 1 ? 0 : 0) + (k === 0 ? 0 : 0);
       const [w, h, d] = p.size;
       let m;
       if (shape === 'cyl') {
         m = new THREE.Mesh(new THREE.CylinderGeometry(Math.max(w, d) / 2, Math.max(w, d) / 2, h, Math.max(6, Math.min(24, Math.round(w * 2)))), mtl);
-        m.position.set(cx + dx * 0, cy, cz);
+        m.position.set(cx, cy, cz);
       } else if (shape === 'ball') {
         m = new THREE.Mesh(new THREE.SphereGeometry(Math.max(w, d) / 2, 14, 10), mtl);
         m.position.set(cx, cy, cz);
@@ -3705,6 +3712,7 @@ const GameLogic = {
       m.castShadow = m.receiveShadow = true;
       scene.add(m);
       rec.meshes.push(m);
+      if (!p.requires) this._static.push(m);        // v17: merged after the build pass
       if (p.noCollide !== true && shape !== 'wedge') {   // wedges are trim (AABB physics can't slope)
         rec.colliders.push(World.addBox(cx, cy, cz, w, h, d));
       }
@@ -3714,6 +3722,56 @@ const GameLogic = {
     if (p.requires) { rec.hide(); this.parts.push(rec); }
     if (p.id) this.byId.set(p.id, rec);
     return rec;
+  },
+  /* v17 PERFORMANCE: every always-visible build part is baked into ONE
+     mesh per material. A studded plastic box is 6 draw calls on its
+     own (one per face group) and the shadow pass doubles it, so a
+     300-part town was ~1,000+ draws a frame — far too many for a
+     mid-range phone. Merged it is a few dozen. Gated parts (requires)
+     stay separate so they can still pop in; colliders are untouched. */
+  _static: [],
+  merged: [],
+  mergeStatic() {
+    const list = this._static; this._static = [];
+    if (list.length < 2) return;
+    const buckets = new Map();
+    const v = new THREE.Vector3(), n = new THREE.Vector3(), nm = new THREE.Matrix3();
+    for (const m of list) {
+      if (!m.isMesh || !m.geometry || !m.geometry.attributes.position) continue;
+      m.updateMatrixWorld(true);
+      nm.getNormalMatrix(m.matrixWorld);
+      const g = m.geometry, P = g.attributes.position, N = g.attributes.normal, U = g.attributes.uv, I = g.index;
+      const total = I ? I.count : P.count;
+      const groups = g.groups.length ? g.groups : [{ start: 0, count: total, materialIndex: 0 }];
+      for (const gr of groups) {
+        const mt = Array.isArray(m.material) ? m.material[gr.materialIndex || 0] : m.material;
+        if (!mt) continue;
+        let b = buckets.get(mt);
+        if (!b) buckets.set(mt, b = { p: [], n: [], u: [] });
+        const end = Math.min(total, gr.start + (isFinite(gr.count) ? gr.count : total));
+        for (let i = gr.start; i < end; i++) {
+          const k = I ? I.getX(i) : i;
+          v.fromBufferAttribute(P, k).applyMatrix4(m.matrixWorld); b.p.push(v.x, v.y, v.z);
+          if (N) { n.fromBufferAttribute(N, k).applyMatrix3(nm).normalize(); b.n.push(n.x, n.y, n.z); }
+          else b.n.push(0, 1, 0);
+          if (U) b.u.push(U.getX(k), U.getY(k)); else b.u.push(0, 0);
+        }
+      }
+      scene.remove(m);
+      m.visible = false;
+    }
+    for (const [mt, b] of buckets) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(b.p, 3));
+      g.setAttribute('normal', new THREE.Float32BufferAttribute(b.n, 3));
+      g.setAttribute('uv', new THREE.Float32BufferAttribute(b.u, 2));
+      g.computeBoundingSphere();
+      const mesh = new THREE.Mesh(g, mt);
+      mesh.castShadow = mesh.receiveShadow = true;
+      mesh.matrixAutoUpdate = false;
+      scene.add(mesh);
+      this.merged.push(mesh);
+    }
   },
   buildWedge(w, h, d, mtl) {
     /* right-angle ramp: slope from the top of -z up to the top of +z */
@@ -6533,7 +6591,27 @@ if (isTouch) {
    background with a backoff.
 ================================================================ */
 /* WORKER_URL + API_BASE now live in §9.5 (worlds need them at boot) */
-const ADMIN_CODE = 'Jesusisthebom';
+/* v17: the admin code is NOT in this file any more — the relay (v8)
+   checks it and stamps the admin flag on everything it forwards, so a
+   crown can't be faked by editing the page. The code you typed is kept
+   on this device and re-sent on every connect ({t:'auth'}). */
+const ADMIN_KEY = 'baseplate.admin.code.v1';
+let adminPending = null;            // callback waiting on the relay's answer
+function adminAuth(code, cb) {
+  if (!MP.connected) { if (cb) cb(null); return; }
+  adminPending = cb || null;
+  MP._send({ t: 'auth', c: String(code).slice(0, 64) });
+}
+function onAdminAuth(m) {
+  const ok = !!m.ok, cb = adminPending; adminPending = null;
+  if (cb) { cb(ok, m.lim); return; }
+  if (!ok && isAdmin) {             // stored code no longer valid (it was changed)
+    isAdmin = false;
+    try { localStorage.removeItem(ADMIN_KEY); } catch (e) {}
+    applyIdentityToHUD(); rebuildAdminTab();
+    adminBanner('Admin code changed — unlock admin again from the menu.');
+  }
+}
 const CROWN = '<svg viewBox="0 0 24 24" width="12" height="12" style="fill:#f5c542;vertical-align:-1px"><path d="M3 17.5 L3 7.5 L8.2 11.2 L12 4 L15.8 11.2 L21 7.5 L21 17.5 Z"/></svg>';
 const ANIM_OK = ['idle', 'walk', 'run', 'jump', 'climb', 'sit', 'wave', 'dance', 'salute'];
 
@@ -6542,7 +6620,10 @@ const ANIM_OK = ['idle', 'walk', 'run', 'jump', 'climb', 'sit', 'wave', 'dance',
 let USERNAME = 'Player', isAdmin = false, userModalOpen = false, hasStoredName = false;
 function loadIdentity() {
   try { const n = localStorage.getItem('baseplate.user.v1'); if (n) { USERNAME = n; hasStoredName = true; } } catch (e) {}
-  try { isAdmin = localStorage.getItem('baseplate.admin.v1') === '1'; } catch (e) {}
+  try {
+    localStorage.removeItem('baseplate.admin.v1');          // pre-v17 flag (unverified) — retired
+    isAdmin = !!localStorage.getItem(ADMIN_KEY);            // re-verified by the relay on connect
+  } catch (e) {}
 }
 function applyIdentityToHUD() {
   const pname = document.querySelector('#playerhud .pname');
@@ -7129,6 +7210,9 @@ const MP = {
       this.connected = true; this.state = 'on'; this.retry = 0;
       this.sendTO = 0; this.pingTO = 25;      // send a state right away
       this.paintOnline();
+      let code = null;                       // v17: re-verify a saved admin code
+      try { code = localStorage.getItem(ADMIN_KEY); } catch (e) {}
+      if (code) adminAuth(code);
       GameLogic.onConnected();               // v14: ask for the world's game state (§9.7)
     };
     ws.onmessage = ev => this._onmsg(ev.data);
@@ -7173,6 +7257,7 @@ const MP = {
     else if (m.t === 'forceworld') onForceWorld(m);                 // v12: an admin brought me across worlds
     else if (m.t === 'tycs' && m.d && typeof m.d === 'object') GameLogic.applyWorkerSnapshot(m.d);   // v14: relay-stored world state
     else if (m.t === 'bye') removeRemote(m.id);
+    else if (m.t === 'auth') onAdminAuth(m);                        // v17: relay-verified admin
   },
 
   _state(m) {
@@ -8269,15 +8354,22 @@ function buildAdminTab() {
     const btn = mkEl('button', 'abtn', 'Unlock');
     btn.style.marginTop = '4px';
     const tryUnlock = () => {
-      if (inp.value === ADMIN_CODE) {
-        isAdmin = true;
-        try { localStorage.setItem('baseplate.admin.v1', '1'); } catch (e) {}
-        applyIdentityToHUD();
-        rebuildAdminTab();
-      } else {
-        errEl.textContent = 'Incorrect code.';
-        inp.value = ''; inp.focus();
-      }
+      const code = inp.value;
+      if (!code) return;
+      if (!MP.connected) { errEl.textContent = 'Connect to the server first — the relay checks the code.'; return; }
+      btn.disabled = true; errEl.textContent = 'Checking…';
+      adminAuth(code, (ok, lim) => {
+        btn.disabled = false;
+        if (ok) {
+          isAdmin = true;
+          try { localStorage.setItem(ADMIN_KEY, code); } catch (e) {}
+          applyIdentityToHUD();
+          rebuildAdminTab();
+        } else {
+          errEl.textContent = ok === null ? 'Not connected.' : lim ? 'Too many tries — rejoin to try again.' : 'Incorrect code.';
+          inp.value = ''; inp.focus();
+        }
+      });
     };
     btn.addEventListener('click', tryUnlock);
     inp.addEventListener('keydown', e => {
@@ -8442,7 +8534,8 @@ function buildAdminTab() {
   }, 'danger'));
   vbtns.append(actBtn('Lock Admin', () => {
     isAdmin = false;
-    try { localStorage.removeItem('baseplate.admin.v1'); } catch (e) {}
+    try { localStorage.removeItem(ADMIN_KEY); } catch (e) {}
+    MP._send({ t: 'auth', c: '' });           // tell the relay too (drops the crown)
     applyIdentityToHUD();
     rebuildAdminTab();
   }, 'danger'));

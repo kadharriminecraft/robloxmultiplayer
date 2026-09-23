@@ -1,6 +1,31 @@
+// @ts-nocheck — plain-JS worker (wrangler bundles it with esbuild; no type-check step)
 /* ============================================================
-   BASEPLATE MULTIPLAYER RELAY v7 — worlds + game-state persistence
+   BASEPLATE MULTIPLAYER RELAY v8 — verified admins + worlds + game state
    ------------------------------------------------------------
+   WHY v8?  Security + cost fixes (game v17):
+
+     - ADMIN IS VERIFIED BY THE RELAY. Before v8 the admin flag in a
+       state message was whatever the client claimed, and the code was
+       readable in the game's page source — anyone could crown
+       themselves and kick / smite / reset. Now a client sends
+       {t:'auth', c:<code>} and the relay checks it (secret ADMIN_CODE,
+       see below). The relay then STAMPS the admin flag on every state
+       and chat message it forwards, so other players only ever see a
+       crown the relay vouched for. Admin-only room writes (stored room
+       rules, world progress reset) are dropped from non-admins.
+     - IDENTITY IS PINNED. A socket's player id is fixed by its first
+       message; messages claiming a different id are dropped, so nobody
+       can impersonate another player (or an admin) in world events.
+     - Empty rooms stop waking up every 25 s forever (the heartbeat
+       alarm now only re-arms while someone is connected).
+
+     ADMIN CODE: set a Worker secret named ADMIN_CODE in the
+     Cloudflare dashboard (Worker → Settings → Variables and Secrets →
+     Add → type Secret) or with  npx wrangler secret put ADMIN_CODE.
+     Until you do, the relay accepts the legacy code (checked by
+     SHA-256 hash only). The legacy code is in this repo's git history,
+     so PLEASE set a new secret.
+
    This is the code for the worker at:
      robloxmultiplayer.kadharri-minecraft.workers.dev
 
@@ -78,8 +103,8 @@
         (about a minute).
      3. Verify the deploy: open
             https://robloxmultiplayer.kadharri-minecraft.workers.dev/
-        It must say "Baseplate multiplayer relay v6 is live" and
-        "Worlds served: 2 (GET /api/worlds)". If a push does NOT
+        It must say "Baseplate multiplayer relay v8 is live" and
+        "Worlds served: N (GET /api/worlds)" (N = worlds in index.js). If a push does NOT
         change that page, the build failed — check the worker's
         Builds / Deployments tab in the Cloudflare dashboard for the
         red error line (it names the file it couldn't resolve).
@@ -112,6 +137,24 @@
 import { WORLD_LIST } from '../worlds/index.js';
 
 const MAX_CLIENTS = 40;
+/* SHA-256 of the pre-v8 admin code — only used when no ADMIN_CODE secret is set */
+const LEGACY_ADMIN_SHA256 = '0957e5fcf512803b9c6ea0c106fc939cc838ac996184539a23dda95e190ddc94';
+async function sha256hex(str) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+async function checkAdminCode(code, env) {
+  if (typeof code !== 'string' || !code || code.length > 64) return false;
+  const secret = env && typeof env.ADMIN_CODE === 'string' ? env.ADMIN_CODE : '';
+  if (secret) {
+    // constant-time compare on the hashes (both fixed length)
+    const [a, b] = await Promise.all([sha256hex(code), sha256hex(secret)]);
+    let diff = 0;
+    for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+    return diff === 0;
+  }
+  return (await sha256hex(code)) === LEGACY_ADMIN_SHA256;
+}
 const REGISTRY_NAME = '__registry__';
 const LEGACY_ROOM = 'baseplate-world';   // keeps v4's stored room rules
 const CORS = {
@@ -165,7 +208,7 @@ export default {
           '  ' + (meta[w] || w) + ' — ' + byWorld[w].length + ' player' +
           (byWorld[w].length === 1 ? '' : 's') + ': ' + byWorld[w].join(', '));
         return new Response(
-          'Baseplate multiplayer relay v6 is live — ' + (j.players || []).length +
+          'Baseplate multiplayer relay v8 is live — ' + (j.players || []).length +
           ' player(s) connected\nWorlds served: ' + WORLD_LIST.length +
           ' (GET /api/worlds)\n' + (lines.length ? lines.join('\n') + '\n' : ''),
           { status: 200, headers: { 'content-type': 'text/plain; charset=utf-8' } });
@@ -330,8 +373,9 @@ export class MyDurableObject {
       }
     }).catch(() => {});
 
-    let id = null;                          // bound from the first state message
-    let msgs = 0, winStart = Date.now();
+    let id = null;                          // bound from the first message (then pinned)
+    let msgs = 0, winStart = Date.now(), authTries = 0;
+    server._admin = false;                  // v8: set only by a verified {t:'auth'}
 
     server.addEventListener('message', ev => {
       if (typeof ev.data !== 'string' || ev.data.length > 4096) return;   // size cap (v6: room for chunked snapshots)
@@ -342,7 +386,20 @@ export class MyDurableObject {
       let m;
       try { m = JSON.parse(ev.data); } catch (e) { return; }
 
+      if (!m || typeof m !== 'object') return;
       if (m.t === 'p') { try { server.send('{"t":"q"}'); } catch (e) {} return; }  // keepalive ping
+
+      /* v8: admin login — the relay checks the code, never the client */
+      if (m.t === 'auth') {
+        if (++authTries > 5) { try { server.send('{"t":"auth","ok":0,"lim":1}'); } catch (e) {} return; }
+        checkAdminCode(m.c, this.env).then(ok => {
+          server._admin = !!ok;
+          if (server._info) server._info.a = ok ? 1 : 0;
+          try { server.send(JSON.stringify({ t: 'auth', ok: ok ? 1 : 0 })); } catch (e) {}
+          this._report();                              // presence crown follows
+        }).catch(() => {});
+        return;
+      }
 
       /* v5: admin cross-world bring — never relayed to the room.
          The sender must be a KNOWN admin (their state broadcast
@@ -350,7 +407,7 @@ export class MyDurableObject {
          player from the registry's presence list. */
       if (m.t === 'x' && m.k === 'bring' && typeof m.tg === 'string') {
         const sender = [...this.clients].find(ws => ws._info && ws._info.i === m.id);
-        if (sender && sender._info.a && Array.isArray(this.presence)) {
+        if (sender === server && server._admin && Array.isArray(this.presence)) {
           const target = this.presence.find(p => p && p.i === m.tg && p.w !== myWorld);
           if (target) {
             const stub = this.env.ROOM.get(this.env.ROOM.idFromName(roomFor(target.w)));
@@ -364,18 +421,26 @@ export class MyDurableObject {
       }
 
       if (m.t === 's' || m.t === 'c' || m.t === 'w') {  // state / chat / world event → pass through
-        if (typeof m.id === 'string' && m.id.length <= 64) {
-          if (id === null) this._report();             // first bind → presence update
-          id = m.id;                                    // remember who this socket is
+        if (typeof m.id !== 'string' || !m.id || m.id.length > 64) return;
+        if (id === null) { id = m.id; this._report(); }  // first bind → presence update
+        else if (m.id !== id) return;                   // v8: no impersonating other players
+        let out = ev.data;
+        if (m.t === 's' || m.t === 'c') {               // v8: the relay stamps the admin flag
+          const a = server._admin ? 1 : 0;
+          if ((m.a ? 1 : 0) !== a) { m.a = a; out = JSON.stringify(m); }
         }
         if (m.t === 's') {                              // v5: track name/admin/pos for presence
           server._info = {
             i: id, n: String(m.n || 'Player').slice(0, 20),
-            a: m.a ? 1 : 0, x: +m.x || 0, y: +m.y || 0, z: +m.z || 0
+            a: server._admin ? 1 : 0, x: +m.x || 0, y: +m.y || 0, z: +m.z || 0
           };
         }
-        if (m.t === 'w' && m.k === 'rrules' && m.d && typeof m.d === 'object' && !Array.isArray(m.d))
-          this.state.storage.put('rules', m.d).catch(() => {});   // v4: remember for joiners
+        if (m.t === 'w' && m.k === 'rrules') {          // admin-only: room rules
+          if (!server._admin) return;
+          if (m.d && typeof m.d === 'object' && !Array.isArray(m.d))
+            this.state.storage.put('rules', m.d).catch(() => {});   // v4: remember for joiners
+        }
+        if (m.t === 'w' && m.k === 'tyc' && m.d && m.d.t === 'r' && !server._admin) return;  // admin-only reset
         /* v6: world GAME state — buys, claims, taken pickups (tyc
            events from the v14 game logic, §9.7). Stored so tycoon
            progress survives an empty room; joiners get it below. */
@@ -383,7 +448,7 @@ export class MyDurableObject {
           this._gameApply(m.d, id).catch(() => {});
         for (const ws of this.clients) {
           if (ws === server || ws.readyState !== 1) continue;
-          try { ws.send(ev.data); } catch (e) {}
+          try { ws.send(out); } catch (e) {}
         }
       }
     });
@@ -452,7 +517,7 @@ export class MyDurableObject {
       const reg = this.env.ROOM.get(this.env.ROOM.idFromName(REGISTRY_NAME));
       reg.fetch(new Request('https://reg/report?w=' + encodeURIComponent(this.w || 'baseplate'),
         { method: 'POST', body: JSON.stringify({ l }) })).catch(() => {});
-      this._scheduleAlarm();
+      if (this.clients.size) this._scheduleAlarm();   // v8: empty rooms go back to sleep
     }, 400);
   }
   async _scheduleAlarm() {
@@ -497,7 +562,7 @@ export class MyDurableObject {
       if (this.rooms.size) this._registryArm();
       return;
     }
-    this._report();
-    if (this.clients.size) this._scheduleAlarm();
+    if (!this.w) return;                 // evicted + forgot our world: nothing to report
+    this._report();                      // (re-arms itself while anyone is connected)
   }
 }
