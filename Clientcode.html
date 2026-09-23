@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Baseplate — v19</title>
+<title>Baseplate — v20</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@600;700;800&display=swap" rel="stylesheet">
 <style>
@@ -738,9 +738,13 @@ document.body.appendChild(renderer.domElement);
 renderer.domElement.addEventListener('contextmenu', e => e.preventDefault());
 
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0xd8e7f3, 60, 200);
+scene.fog = new THREE.Fog(0xd8e7f3, 80, 320);
 
-const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 500);
+/* v20: far plane WAY out — big worlds (tycoon, neighborhood) put the
+   camera 200+ studs from origin, and the old 500 clipped the sky
+   dome's far side, which read as "the sky turns black at the map
+   edge". 1600 covers any fog distance the slider allows. */
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 1600);
 camera.position.set(0, 6, -14);
 
 const pmrem = new THREE.PMREMGenerator(renderer);
@@ -756,7 +760,12 @@ const skyMat = new THREE.ShaderMaterial({
       void main(){ float h=clamp(normalize(vP).y,0.0,1.0);
       gl_FragColor=vec4(mix(bottom,top,pow(h,0.6)),1.0); }`
   });
-scene.add(new THREE.Mesh(new THREE.SphereGeometry(420, 24, 12), skyMat));
+/* v20: the sky dome is huge AND rides with the camera (see
+   updateDayNight) — like a real skybox it can never be exited or
+   clipped, so the horizon stays sky-colored no matter how far across
+   the map you roam. */
+const skyMesh = new THREE.Mesh(new THREE.SphereGeometry(1000, 24, 12), skyMat);
+scene.add(skyMesh);
 const hemi = new THREE.HemisphereLight(0xcfe6ff, 0x8f9299, 1.0);
 scene.add(hemi);
 
@@ -795,7 +804,7 @@ const DEFAULTS = {
   // world
   dayTime: 10.2, daySpeed: 0,
   // smite (admin lightning) + player-size stat scaling — room rules too (§1.6)
-  smiteDmg: 70, smiteSize: 4, smitePower: 30, smiteSplash: true, smiteRadius: 8,
+  smiteDmg: 70, smiteSize: 4, smitePower: 80, smiteSplash: true, smiteRadius: 12,
   sizeScaleStats: true
 };
 const V = Object.assign({}, DEFAULTS);
@@ -880,12 +889,16 @@ function resetMyCharacter() {
    sdist = how many studs around the PLAYER the shadow box covers
    (the sun + its target follow the player, so bigger = shadows stay
    visible further away, at the cost of texel resolution) */
+/* v20: view distances opened WAY up — the tycoon + neighborhood maps
+   are 400×400, and the old 130-230 fog swallowed whole bases. Fog
+   starts deeper into the view too (0.42× the far value), so you see
+   the whole map plus some breathing room before it fades. */
 const GRAPHICS = {
-  1: { pr: 1.0,  shadows: false, smap: 0,    fog: 130, ani: 0, sdist: 20 },
-  2: { pr: 1.0,  shadows: true,  smap: 512,  fog: 150, ani: 1, sdist: 32 },
-  3: { pr: 1.25, shadows: true,  smap: 1024, fog: 170, ani: 2, sdist: 42 },
-  4: { pr: 1.5,  shadows: true,  smap: 2048, fog: 200, ani: 4, sdist: 52 },
-  5: { pr: 2.0,  shadows: true,  smap: 2048, fog: 230, ani: 8, sdist: 64 }
+  1: { pr: 1.0,  shadows: false, smap: 0,    fog: 220, ani: 0, sdist: 20 },
+  2: { pr: 1.0,  shadows: true,  smap: 512,  fog: 280, ani: 1, sdist: 32 },
+  3: { pr: 1.25, shadows: true,  smap: 1024, fog: 360, ani: 2, sdist: 42 },
+  4: { pr: 1.5,  shadows: true,  smap: 2048, fog: 440, ani: 4, sdist: 52 },
+  5: { pr: 2.0,  shadows: true,  smap: 2048, fog: 520, ani: 8, sdist: 64 }
 };
 
 /* adaptive resolution — in Auto mode the render scale tunes itself
@@ -971,8 +984,10 @@ function applyGraphics() {
     // map size CAPS the reach (one texel must stay under ~0.15 studs
     // or the whole ground grows shadow acne) — the value chip shows
     // the effective distance when this clamps.
+    // v20: cap raised (sq * 0.13) + the bias below scales with it, so
+    // High/Ultra push shadows across a whole tycoon base cleanly.
     const want = V.shadowDistance > 0 ? V.shadowDistance : g.sdist;
-    SHADOW_SD = Math.max(12, Math.min(want, sq * 0.075));
+    SHADOW_SD = Math.max(12, Math.min(want, sq * 0.13));
     SHADOW_R = 90 + SHADOW_SD * 1.4;                 // where the sun sits (§day/night)
     const sc = sun.shadow.camera;
     if (sc.left !== -SHADOW_SD) {
@@ -987,9 +1002,10 @@ function applyGraphics() {
     // bias scales with the real texel size so every quality/reach combo stays acne-free
     sun.shadow.normalBias = 0.03 + (2 * SHADOW_SD / sq) * 1.2;
   }
-  // fog / view distance
+  // fog / view distance (v20: near pushed out so the far half of the
+  // view stays crisp — you see the whole map before it fades)
   const fog = V.fogDistance > 0 ? V.fogDistance : g.fog;
-  scene.fog.near = fog * 0.3; scene.fog.far = fog;
+  scene.fog.near = fog * 0.42; scene.fog.far = fog;
   // texture filtering tier
   studTex.anisotropy = Math.min(g.ani, renderer.capabilities.getMaxAnisotropy());
   studTex.needsUpdate = true;
@@ -2062,7 +2078,7 @@ function normalizeItemStats(it) {
   if (it.kind === 'gun')
     return {
       damage: clampN(s.damage, 1, 500, 12), pvp: clampN(s.pvp, 0, 200, 12),
-      cooldown: clampN(s.cooldown, 0.08, 2, 0.3), range: clampN(s.range, 20, 400, 200),
+      cooldown: clampN(s.cooldown, 0.04, 2, 0.3), range: clampN(s.range, 20, 400, 200),
       spread: clampN(s.spread, 0, 12, 2), pellets: Math.round(clampN(s.pellets, 1, 8, 1)),
       ammo: Math.round(clampN(s.ammo, 0, 500, 0)), reload: clampN(s.reload, 0, 6, 0),
       auto: !!s.auto, kb: clampN(s.kb, 0, 60, 12),
@@ -2203,21 +2219,32 @@ function buildGunMesh(m) {
   const L = clampN(m.len, 0.6, 2.5, 1);           // barrel length scale
   const g = new THREE.Group();
   if (m.style === 'minigun') {
-    /* v15: the minigun — a fat drum-fed rotary: 3 barrels around the
-       axis, a chunky housing and a big drum magazine. */
-    part(0.5, 0.62, 1.3, bodyM, 0, 0.14, 0.5, g);               // housing
-    part(0.56, 0.5, 0.4, accM, 0, 0.16, 1.05, g);                // barrel clamp
-    const rot = new THREE.Group(); rot.position.set(0, 0.14, 1.5); g.add(rot);
-    for (let b = 0; b < 3; b++) {
-      const a = b / 3 * Math.PI * 2;
-      const bar = part(0.13, 0.13, 1.05 * L, barrelM, Math.cos(a) * 0.17, Math.sin(a) * 0.17, 0, rot);
+    /* v20: the minigun, done properly — a fat SIX-barrel rotary (the
+       cluster spins while you hold the trigger: userData.rotor), a
+       drum mag on the side with an ammo belt, a carry handle and a
+       chunky receiver. Grip at the hand, bore along +Z like every
+       other gun, so it aims and rides the arm exactly like them. */
+    part(0.46, 0.66, 0.55, bodyM, 0, 0.07, -0.32, g);             // rear receiver
+    part(0.52, 0.52, 0.6, bodyM, 0, 0.11, 0.16, g);               // front receiver block
+    part(0.56, 0.2, 0.42, accM, 0, 0.44, 0.02, g);                 // top rail
+    const rot = new THREE.Group(); rot.position.set(0, 0.11, 1.02); g.add(rot);
+    part(0.4, 0.4, 0.42, accM, 0, 0, -0.14, rot);                  // rotor collar (spins with the cluster)
+    for (let b = 0; b < 6; b++) {                                  // SIX barrels in a ring
+      const a = b / 6 * Math.PI * 2;
+      const bar = part(0.12, 0.12, 1.3 * L, barrelM, Math.cos(a) * 0.16, Math.sin(a) * 0.16, 0.55, rot);
       bar.castShadow = true;
     }
-    part(0.2, 0.2, 0.16, accM, 0, 0.14, 1.98 + 0.5 * L, g);       // muzzle cap
-    const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.42, 12), accM);
-    drum.rotation.x = Math.PI / 2; drum.position.set(0, -0.32, 0.42); g.add(drum);   // drum mag
-    const grip = part(0.3, 0.7, 0.4, bodyM, 0, -0.44, 0.05, g);   // grip
-    grip.rotation.x = 0.3;
+    const rod = part(0.1, 0.1, 1.5 * L, bodyM, 0, 0, 0.72, rot);   // center rod
+    rod.castShadow = true;
+    part(0.24, 0.24, 0.18, accM, 0, 0.11, 1.02 + 0.62 * L, g);     // muzzle brake
+    const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.38, 0.5, 12), accM);
+    drum.rotation.x = Math.PI / 2; drum.position.set(-0.32, -0.26, -0.1); drum.castShadow = true;
+    g.add(drum);                                                   // drum mag on the side
+    part(0.14, 0.12, 0.55, mat(0x1c1f24, 0.6), -0.12, 0.0, 0.1, g);// ammo belt into the receiver
+    part(0.14, 0.36, 0.72, bodyM, 0, 0.58, -0.12, g);              // carry handle
+    const grip = part(0.3, 0.74, 0.4, bodyM, 0, -0.52, -0.3, g);   // grip at the hand
+    grip.rotation.x = 0.34;
+    g.userData.rotor = rot;                                        // tickWeapon spins this
     return g;
   }
   part(0.34, 0.5, 1.15, bodyM, 0, 0.12, 0.42, g);          // body
@@ -2447,6 +2474,15 @@ function tickWeapon(dt) {
     const st2 = it2 ? toolStats(it2.id) : null;
     if (st2 && st2.auto && gunCd <= 0) fireGun(null, null);
   }
+  /* v20: MINIGUN SPIN-UP — hold the trigger and the barrel cluster
+     ramps to full speed (firing keeps it hot), release and it winds
+     down. Purely visual, but it's what makes a minigun FEEL like one. */
+  const mDef = it && ITEM_DEFS[it.id];
+  if (mDef && mDef.mesh && mDef.mesh.style === 'minigun') {
+    const firing = (fireHeld && !fireHeldMoved) || gunKickT > 0;
+    miniSpin += ((firing ? 1 : 0) - miniSpin) * Math.min(1, dt * (firing ? 3.4 : 1.4));
+    if (toolMesh && toolMesh.userData.rotor) toolMesh.userData.rotor.rotation.z += miniSpin * 36 * dt;
+  }
   updateAmmoHUD();
 }
 
@@ -2492,7 +2528,7 @@ function pvpHit(to, dmg, nx, nz, kb) {
    person shoots exactly where you click. Damage is decided on the
    shooter's screen and applied by the victim's (§12.6). ---- */
 const GUN_RANGE = 220, GUN_COOLDOWN = 0.26;
-let gunCd = 0, gunKickT = 0;
+let gunCd = 0, gunKickT = 0, miniSpin = 0;   // miniSpin: v20 minigun rotor 0..1
 const _gv = new THREE.Vector3();
 const _mz = new THREE.Vector3();   // muzzle world position
 
@@ -2591,7 +2627,7 @@ function fireGun(cx, cy) {
   const st = toolStats(it ? it.id : 'gun');
   if (gunCd > 0 || userModalOpen || (it && it.reloading != null)) return;
   if (st.ammo > 0 && it && it.ammo <= 0) { startReload(); return; }
-  gunCd = Math.max(0.06, st.cooldown || 0.26); gunKickT = 0.14;
+  gunCd = Math.max(0.045, st.cooldown || 0.26); gunKickT = 0.14;   // v20: the minigun's 0.05s hose fits
   if (st.ammo > 0 && it) it.ammo--;
 
   /* aim direction — FP: the crosshair ray; 3rd person: through the tap */
@@ -2614,7 +2650,9 @@ function fireGun(cx, cy) {
   let mx, my, mz;
   if (cam.fp && toolMesh) {
     toolMesh.updateWorldMatrix(true, false);          // fpCam -> fpTool -> gun (view space)
-    _mz.set(0, 0.12, 1.95).applyMatrix4(toolMesh.matrixWorld);   // barrel tip, view space
+    const mDef = ITEM_DEFS[it ? it.id : ''];                       // v20: long guns poke the
+    const mzLen = (mDef && mDef.mesh && mDef.mesh.style === 'minigun') ? 2.35 : 1.95;   // muzzle further out
+    _mz.set(0, 0.12, mzLen).applyMatrix4(toolMesh.matrixWorld);   // barrel tip, view space
     _mz.applyMatrix4(camera.matrixWorld);             // view space -> world space
     mx = _mz.x; my = _mz.y; mz = _mz.z;
   } else if (cam.fp) {
@@ -2895,7 +2933,7 @@ function validateGameLogic(w) {
   const items = new Set(['sword', 'gun', 'apple']);
   const TYPES = ['button', 'claim', 'dropper', 'conveyor', 'collector', 'killbrick',
     'teleport', 'checkpoint', 'pad', 'npc', 'spawner', 'pickup', 'door', 'sign',
-    'claimer', 'zwave', 'swing', 'laser', 'upgrader'];   // v16: money vault + zombie-wave pad · v18: swing set · v19: laser doors + upgraders
+    'claimer', 'zwave', 'swing', 'laser', 'upgrader', 'car'];   // v16 vault+waves · v18 swings · v19 lasers · v20 CARS
 
   /* items[] — custom weapons + consumables */
   if (w.items != null) {
@@ -2918,7 +2956,7 @@ function validateGameLogic(w) {
         if (S.damage != null && !num(S.damage, 1, 500)) return 'item "' + it.id + '" bad damage';
         if (S.pvp != null && !num(S.pvp, 0, 200)) return 'item "' + it.id + '" bad pvp';
         if (S.range != null && !num(S.range, 3, 400)) return 'item "' + it.id + '" bad range';
-        if (S.cooldown != null && !num(S.cooldown, 0.08, 2)) return 'item "' + it.id + '" bad cooldown';
+        if (S.cooldown != null && !num(S.cooldown, 0.04, 2)) return 'item "' + it.id + '" bad cooldown';   // v20: miniguns fire fast
         if (S.kb != null && !num(S.kb, 0, 60)) return 'item "' + it.id + '" bad knockback';
         if (S.spread != null && !num(S.spread, 0, 12)) return 'item "' + it.id + '" bad spread';
         if (S.pellets != null && !num(S.pellets, 1, 8)) return 'item "' + it.id + '" bad pellets';
@@ -2953,11 +2991,20 @@ function validateGameLogic(w) {
     if (w.vars.maxZombies != null && !num(w.vars.maxZombies, 1, 40)) return 'bad vars maxZombies';
     if (w.vars.loseOnDeath != null && typeof w.vars.loseOnDeath !== 'boolean') return 'bad vars loseOnDeath';   // v18
     if (w.vars.doors != null && !['auto', 'manual'].includes(w.vars.doors)) return 'bad vars doors';   // v19
+    /* v20: per-world room-rule presets — the world ships its own
+       gravity / damage / knockback / smite tuning, applied the moment
+       you enter the room (admin tweaks still override live) */
+    if (w.vars.rules != null) {
+      if (typeof w.vars.rules !== 'object' || Array.isArray(w.vars.rules)) return 'bad vars rules';
+      for (const k in w.vars.rules)
+        if (!RULE_KEYS.includes(k)) return 'vars rules: "' + k + '" is not a room rule';
+    }
   }
 
-  /* build[] — static parts */
+  /* build[] — static parts (v20: cap 2500 — the neighborhood grew a
+     lot of street detail, and merged statics keep the draw calls flat) */
   if (w.build != null) {
-    if (!Array.isArray(w.build) || w.build.length > 1500) return 'bad build';
+    if (!Array.isArray(w.build) || w.build.length > 2500) return 'bad build';
     for (const p of w.build) {
       if (!p || typeof p !== 'object') return 'bad build part';
       if (!Array.isArray(p.pos) || p.pos.length !== 3 || !num(p.pos[0], -1000, 1000)) return 'bad part pos';
@@ -3089,6 +3136,16 @@ function validateGameLogic(w) {
           if (e.seats != null && !num(e.seats, 1, 3)) return 'swing "' + e.id + '" bad seats';
           if (e.length != null && !num(e.length, 4, 10)) return 'swing "' + e.id + '" bad length';
           if (e.color != null && !hex(e.color)) return 'swing "' + e.id + '" bad color';
+          break;
+        case 'car':                                                                                                // v20
+          if (!Array.isArray(e.wps) || e.wps.length < 3 || e.wps.length > 40) return 'car "' + e.id + '" bad wps';
+          for (const p of e.wps)
+            if (!Array.isArray(p) || p.length !== 2 || !num(p[0], -1000, 1000) || !num(p[1], -1000, 1000)) return 'car "' + e.id + '" bad wps entry';
+          if (e.speed != null && !num(e.speed, 4, 40)) return 'car "' + e.id + '" bad speed';
+          if (e.damage != null && !num(e.damage, 1, 200)) return 'car "' + e.id + '" bad damage';
+          if (e.color != null && !hex(e.color)) return 'car "' + e.id + '" bad color';
+          if (e.driver != null && !hex(e.driver)) return 'car "' + e.id + '" bad driver color';
+          if (e.phase != null && !num(e.phase, 0, 1e6)) return 'car "' + e.id + '" bad phase';
           break;
         case 'sign':
           if (e.width != null && !num(e.width, 2, 24)) return 'sign "' + e.id + '" bad width';
@@ -3820,7 +3877,23 @@ const GameLogic = {
         V.maxZombies = Math.round(clamp(v.maxZombies, 1, 40));
         MAX_ZOMBIES = V.maxZombies;
       }
-    }
+      /* v20: PER-WORLD ROOM RULES — every world ships its own tuning
+         (vars.rules): the tycoon fights different from the suburb, so
+         the RULES CHANGE WITH THE ROOM you're in and the Rules tab
+         starts from that world's preset instead of the factory ones.
+         Admin tweaks on top still broadcast + persist on the relay
+         per room, exactly as before. */
+      this.worldRules = (v.rules && typeof v.rules === 'object' && !Array.isArray(v.rules)) ? v.rules : null;
+      if (this.worldRules) {
+        for (const k of RULE_KEYS) {
+          if (this.worldRules[k] == null) continue;
+          let rv = this.worldRules[k];
+          if (typeof rv !== 'boolean') { rv = +rv; if (!isFinite(rv)) continue; }
+          setVal(k, rv);
+        }
+        syncConsts();
+      }
+    } else this.worldRules = null;
 
     if (recipe.economy && typeof recipe.economy === 'object') {
       Wallet.load(recipe.economy, recipe.id);
@@ -5350,25 +5423,131 @@ const WL_BUILDERS = {
      v16 FIX: the machine now stands BESIDE the belt and its spout arm
      reaches OVER it — `dropOff: [ox, oz]` is where the ore actually
      lands, so drops never pile up on the machine's own collider
-     (that was the v15 "drops get stuck" bug). */
+     (that was the v15 "drops get stuck" bug).
+     v20: FIVE DISTINCT MACHINES — `tier` in the recipe picks the look
+     (1 Classic · 2 Twin · 3 Turbo · 4 MEGA · 5 Diamond; ids without a
+     tier still map: "mega"→4, "diamond"→5, "drop2/3"→2/3). They are
+     now GATED too: a dropper is INVISIBLE (and has no collider) until
+     its `requires` are bought — only the starter machine appears with
+     the plot, the rest you actually have to buy. */
   dropper(rec, e, x, y, z) {
     rec.kind = 'dropper';
+    rec.popT = -1;
     const off = Array.isArray(e.dropOff) ? e.dropOff : [0, 0];
     const ox = clamp(+off[0] || 0, -8, 8), oz = clamp(+off[1] || 0, -8, 8);
-    const bodyM = mat(wlIsHex(e.color) ? wlHex(e.color) : 0x4a5568, 0.5, 0.5);
-    solid(2.2, 1.2, 2.2, bodyM, x, y + 0.6, z);
-    box(1.6, 1.6, 1.6, mat(0x2f3742, 0.5, 0.6), x, y + 2.0, z);
-    /* spout arm toward the drop point (visual) */
     const dx = x + ox, dz = z + oz;
+    let tier = Math.round(wlNum(e.tier, 1, 5, 0));
+    if (!(tier >= 1 && tier <= 5)) {
+      const id = String(e.id || '');
+      tier = /diamond/.test(id) ? 5 : /mega/.test(id) ? 4 : /drop3/.test(id) ? 3 : /drop2/.test(id) ? 2 : 1;
+    }
+    const grp = new THREE.Group();
+    grp.position.set(x, y, z);
+    scene.add(grp);
+    rec.grp = grp;
+    const baseC = wlIsHex(e.color) ? wlHex(e.color) : 0x4a5568;
+    const bodyM = mat(baseC, 0.5, 0.5);
+    const darkM = mat(0x2f3742, 0.5, 0.6);
+    const spin = [];                                 // animated bits: {o, ax, r} — rotates on one axis
+    const lamps = [];                                // blinky lights
+    const lampM = (c, i) => new THREE.MeshStandardMaterial({ color: 0x11150f, emissive: c, emissiveIntensity: i });
+    /* the one shared collider — every tier parks on it */
+    const col = World.addBox(x, y + 0.6, z, 2.6, 1.2, 2.6);
+    rec.collider = col;
+    /* the spout arm + nozzle over the drop point (all tiers have one) */
     const armLen = Math.hypot(ox, oz);
-    const arm = box(Math.max(0.8, armLen + 0.8), 0.5, 1.1, mat(0x2f3742, 0.5, 0.6), (x + dx) / 2, y + 2.55, (z + dz) / 2, Math.atan2(-oz, ox));
-    arm.castShadow = true;
-    const noz = box(0.7, 0.9, 0.7, mat(0xf5c542, 0.35, 0.7), dx, y + 2.3, dz);
-    const lamp = box(0.5, 0.5, 0.5,
-      new THREE.MeshStandardMaterial({ color: 0x11150f, emissive: 0x58e07a, emissiveIntensity: 1.4 }), x + 1.4, y + 1.5, z);
+    const mkSpout = (hy, thick, m) => {
+      const arm = new THREE.Mesh(geo(Math.max(0.8, armLen + 0.8), thick, 1.1), m || darkM);
+      arm.position.set(ox / 2, hy, oz / 2);
+      arm.rotation.y = Math.atan2(-oz, ox);
+      arm.castShadow = true;
+      grp.add(arm);
+      const noz = part(0.7, 0.9, 0.7, mat(0xf5c542, 0.35, 0.7), ox, hy - 0.25, oz, grp);
+      return noz;
+    };
+    if (tier === 1) {
+      /* T1 CLASSIC — the trusty gray starter box */
+      part(2.2, 1.2, 2.2, bodyM, 0, 0.6, 0, grp);
+      part(1.6, 1.6, 1.6, darkM, 0, 2.0, 0, grp);
+      mkSpout(2.55, 0.5);
+      lamps.push(part(0.5, 0.5, 0.5, lampM(0x58e07a, 1.4), 1.4, 1.5, 0, grp));
+    } else if (tier === 2) {
+      /* T2 TWIN — taller, blue-steel, twin pipes feed one wide nozzle */
+      const steelM = mat(0x3d4a5c, 0.45, 0.65);
+      part(2.2, 1.2, 2.2, bodyM, 0, 0.6, 0, grp);
+      for (const sx of [-0.7, 0.7]) part(0.4, 1.6, 0.4, darkM, sx, 1.9, 0.8, grp);   // legs
+      part(2.4, 1.3, 1.9, steelM, 0, 2.6, 0, grp);                                   // head
+      part(2.6, 0.25, 2.1, mat(0x8fb7e8, 0.35, 0.7), 0, 3.35, 0, grp);              // lid
+      lamps.push(part(0.5, 0.5, 0.5, lampM(0x58a0e0, 1.5), 1.15, 2.6, 1.0, grp));
+      const twin = new THREE.Group(); twin.position.set(0, 2.1, 0.62); grp.add(twin);
+      for (const sx of [-0.45, 0.45]) part(0.28, 0.28, 1.5, mat(0x8fb7e8, 0.3, 0.8), sx, 0, 0, twin);
+      spin.push({ o: twin, ax: 'z', r: 2.6 });       // the twin feed barrels turn over
+      mkSpout(3.3, 0.55, steelM);
+    } else if (tier === 3) {
+      /* T3 TURBO — amber + hazard stripes, side vents and a spinning fan */
+      const amberM = mat(0xc98a2e, 0.45, 0.55);
+      part(2.4, 1.2, 2.4, bodyM, 0, 0.6, 0, grp);
+      part(2.0, 1.8, 2.0, amberM, 0, 2.4, 0, grp);
+      for (let i = 0; i < 3; i++)                                                     // hazard belt
+        part(0.45, 0.5, 0.06, mat(0xf2c94c, 0.5, 0.4), -0.7 + i * 0.7, 2.4, 1.03, grp);
+      const fan = new THREE.Group(); fan.position.set(0, 2.4, -1.05); grp.add(fan);   // rear fan
+      part(0.3, 0.3, 0.3, darkM, 0, 0, 0, fan);
+      for (let b = 0; b < 4; b++) {
+        const bl = part(0.14, 0.8, 0.06, mat(0xb9c2cc, 0.3, 0.8), 0, 0, 0, fan);
+        bl.rotation.z = b * Math.PI / 2;
+      }
+      spin.push({ o: fan, ax: 'z', r: 9 });
+      part(0.3, 1.4, 0.3, darkM, 1.1, 3.2, -0.8, grp);                               // exhaust
+      lamps.push(part(0.5, 0.5, 0.5, lampM(0xffb14e, 1.6), -1.05, 3.4, 0.9, grp));
+      mkSpout(3.0, 0.55, darkM);
+    } else if (tier === 4) {
+      /* T4 MEGA — huge purple-frame rig with a rotating glowing core */
+      const purpM = mat(0x7a4fd0, 0.4, 0.55);
+      part(3.0, 1.2, 3.0, bodyM, 0, 0.6, 0, grp);
+      for (const sx of [-1.2, 1.2]) for (const sz of [-1.2, 1.2])                   // corner posts
+        part(0.5, 3.6, 0.5, purpM, sx, 2.6, sz, grp);
+      part(3.0, 0.4, 3.0, purpM, 0, 4.5, 0, grp);                                    // cap
+      const core = new THREE.Mesh(new THREE.OctahedronGeometry(0.85),
+        new THREE.MeshStandardMaterial({ color: 0xc07fff, emissive: 0x9a4fff, emissiveIntensity: 1.6, roughness: 0.2 }));
+      core.position.set(0, 2.9, 0); core.castShadow = true; grp.add(core);
+      spin.push({ o: core, ax: 'y', r: 2.2 }, { o: core, ax: 'x', r: 0.9 });
+      const cage = new THREE.Mesh(new THREE.TorusGeometry(1.15, 0.08, 8, 22), mat(0x2f3742, 0.4, 0.8));
+      cage.rotation.x = Math.PI / 2; cage.position.set(0, 2.9, 0); grp.add(cage);
+      lamps.push(part(0.5, 0.5, 0.5, lampM(0xc07fff, 1.8), 1.35, 1.5, 1.35, grp));
+      mkSpout(3.7, 0.7, purpM);
+    } else {
+      /* T5 DIAMOND — slim cyan rig with a floating rotating crystal */
+      const cyanM = new THREE.MeshStandardMaterial({ color: 0x39c7d8, roughness: 0.15, metalness: 0.5, transparent: true, opacity: 0.9 });
+      part(2.2, 1.0, 2.2, mat(0x1d3a44, 0.4, 0.6), 0, 0.5, 0, grp);
+      for (const sx of [-0.8, 0.8]) part(0.3, 2.6, 0.3, cyanM, sx, 2.3, -0.8, grp);
+      for (const sx of [-0.8, 0.8]) part(0.3, 0.3, 2.2, cyanM, sx, 3.6, 0, grp);     // top ring
+      const cry = new THREE.Mesh(new THREE.OctahedronGeometry(0.75),
+        new THREE.MeshStandardMaterial({ color: 0x8ff2ff, emissive: 0x39c7d8, emissiveIntensity: 1.9, roughness: 0.05, metalness: 0.2 }));
+      cry.position.set(0, 4.3, 0); cry.castShadow = true; grp.add(cry);
+      spin.push({ o: cry, ax: 'y', r: 2.8 }, { o: cry, ax: 'x', r: 1.2 });
+      const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 1.4, 8),
+        new THREE.MeshStandardMaterial({ color: 0x8ff2ff, emissive: 0x39c7d8, emissiveIntensity: 2.2 }));
+      beam.position.set(0, 5.15, 0); grp.add(beam);
+      for (let k = 0; k < 4; k++) {                                                   // base marker lights
+        const a = k * Math.PI / 2 + Math.PI / 4;
+        lamps.push(part(0.34, 0.34, 0.34, lampM(0x8ff2ff, 1.6), Math.cos(a) * 1.1, 1.15, Math.sin(a) * 1.1, grp));
+      }
+      mkSpout(3.4, 0.4, cyanM);
+    }
     rec.timer = (e.every || 4) * 0.35;   // first drop lands sooner
     rec.tick = dt => {
+      /* pop-in when the machine is first bought */
+      if (rec.popT >= 0 && rec.popT < 0.4) {
+        rec.popT += dt;
+        const s = Math.max(0.01, easeOut(Math.min(1, rec.popT / 0.4)));
+        grp.scale.setScalar(s);
+        if (rec.popT >= 0.4) { grp.scale.setScalar(1); rec.popT = -1; }
+      }
+      for (const s of spin) s.o.rotation[s.ax] += s.r * dt;   // fans whir, cores rotate, crystals spin
+      for (let i = 0; i < lamps.length; i++)
+        lamps[i].material.emissiveIntensity = 1.2 + Math.sin(elapsed * 3 + i * 1.7) * 0.55;
       const plot = e.plot;
+      if (rec.gate === false) return;                     // v20: not bought — no drops
       if (!plot || GameLogic.plotOwner(plot) !== MP.id) return;
       if (GameLogic.drops.length >= 90) return;
       rec.timer -= dt;
@@ -5382,7 +5561,18 @@ const WL_BUILDERS = {
       GameLogic.drops.push(drop);
       WS.emit('dspawn', { i: uid, e: rec.id, x: +drop.x.toFixed(1), y: +drop.y.toFixed(1), z: +drop.z.toFixed(1), v: drop.v });
     };
-    rec.dispose = () => {};
+    /* v20: gated like the buildings — invisible + no collider until bought */
+    rec.setGate = ok => {
+      const was = grp.visible;
+      grp.visible = ok;
+      rec.collider.enabled = ok;
+      if (ok && !was && rec.popT < 0) rec.popT = 0;      // POP!
+    };
+    rec.dispose = () => {
+      scene.remove(grp);
+      rec.collider.enabled = false;
+      const ix = World.colliders.indexOf(rec.collider); if (ix >= 0) World.colliders.splice(ix, 1);
+    };
   },
 
   /* CONVEYOR — moves players + drops riding on top */
@@ -6076,6 +6266,107 @@ const WL_BUILDERS = {
       scene.remove(grp);
       board.geometry.dispose(); tex.dispose(); faceM.dispose();
     };
+  },
+
+  /* v20 CAR — an NPC-driven car looping a waypoint circuit. Every
+     screen simulates its OWN copy of the traffic: the phase comes
+     straight off the wall clock (no drift between devices), the route
+     is data from the recipe. Clip one and it YEETS you — hard — with
+     the full Roblox fling (momentum along the road + lift + tumble). */
+  car(rec, e, x, y, z) {
+    rec.kind = 'car';
+    const raw = Array.isArray(e.wps) ? e.wps : [];
+    const wps = raw.filter(w => Array.isArray(w) && w.length === 2)
+      .map(w => ({ x: +w[0] || 0, z: +w[1] || 0 }));
+    if (wps.length < 3) wps.push({ x, z }, { x: x + 8, z }, { x, z: z + 8 });
+    const spd = wlNum(e.speed, 4, 40, 14);
+    const dmg = wlNum(e.damage, 1, 200, 25);
+    /* route: cumulative segment lengths → phase = distance travelled */
+    const segs = [], lens = [];
+    let loop = 0;
+    for (let i = 0; i < wps.length; i++) {
+      const a = wps[i], b = wps[(i + 1) % wps.length];
+      const l = Math.hypot(b.x - a.x, b.z - a.z) || 0.001;
+      segs.push({ ax: a.x, az: a.z, bx: b.x, bz: b.z, l });
+      lens.push(loop); loop += l;
+    }
+    const routePos = ph => {                     // exact point at distance `ph` around the loop
+      ph = ((ph % loop) + loop) % loop;
+      let i = 0;
+      while (i < lens.length - 1 && lens[i + 1] < ph) i++;
+      const s = segs[i], k = (ph - lens[i]) / s.l;
+      return { x: s.ax + (s.bx - s.ax) * k, z: s.az + (s.bz - s.az) * k };
+    };
+    /* ---- the blocky Roblox car ---- */
+    const grp = new THREE.Group();
+    grp.position.set(wps[0].x, y, wps[0].z);
+    scene.add(grp);
+    const bodyC = wlIsHex(e.color) ? wlHex(e.color) : 0xC4281C;
+    const bodyM = mat(bodyC, 0.35, 0.5), trimM = mat(0x2b2f36, 0.5, 0.6);
+    part(3.0, 1.0, 6.6, bodyM, 0, 1.15, 0, grp);                  // chassis
+    part(3.1, 0.3, 6.8, trimM, 0, 0.62, 0, grp);                   // skirt / bumpers
+    part(2.7, 0.9, 3.2, bodyM, 0, 2.05, -0.25, grp);               // cabin shell
+    const glassM = new THREE.MeshStandardMaterial({ color: 0x9fd8ff, roughness: 0.08, metalness: 0.2, transparent: true, opacity: 0.5 });
+    part(2.55, 0.62, 0.06, glassM, 0, 2.12, 1.36, grp);            // windshield
+    part(2.55, 0.62, 0.06, glassM, 0, 2.12, -1.86, grp);            // rear window
+    part(0.06, 0.55, 2.5, glassM, 1.38, 2.12, -0.25, grp);          // side windows
+    part(0.06, 0.55, 2.5, glassM, -1.38, 2.12, -0.25, grp);
+    part(2.9, 0.16, 0.9, trimM, 0, 2.55, -0.25, grp);               // roof rack
+    const headM = new THREE.MeshStandardMaterial({ color: 0xfff6d8, emissive: 0xfff2b0, emissiveIntensity: 1.6 });
+    const tailM = new THREE.MeshStandardMaterial({ color: 0x7a1410, emissive: 0xd1332a, emissiveIntensity: 1.3 });
+    part(0.6, 0.3, 0.12, headM, 0.95, 1.2, 3.32, grp);              // headlights
+    part(0.6, 0.3, 0.12, headM, -0.95, 1.2, 3.32, grp);
+    part(0.6, 0.28, 0.12, tailM, 0.95, 1.25, -3.32, grp);          // taillights
+    part(0.6, 0.28, 0.12, tailM, -0.95, 1.25, -3.32, grp);
+    const wheelG = new THREE.CylinderGeometry(0.62, 0.62, 0.44, 12);
+    const wheelM = mat(0x1c1c1f, 0.9), hubG = new THREE.CylinderGeometry(0.3, 0.3, 0.48, 8);
+    const hubM = mat(0xb9c2cc, 0.35, 0.85);
+    const wheels = [];
+    for (const sx of [-1.42, 1.42]) for (const sz of [-2.1, 2.25]) {
+      const wh = new THREE.Mesh(wheelG, wheelM);
+      wh.rotation.z = Math.PI / 2;
+      wh.position.set(sx, 0.62, sz); wh.castShadow = true;
+      const hub = new THREE.Mesh(hubG, hubM);
+      hub.rotation.z = Math.PI / 2;
+      wh.add(hub);
+      grp.add(wh); wheels.push(wh);
+    }
+    /* the NPC driver — a little blocky rig behind the wheel */
+    const driverC = wlIsHex(e.driver) ? wlHex(e.driver) : [0x2f6fb3, 0xb3612f, 0x53a05a, 0x8a53a0, 0xb3a02f][wps.length % 5];
+    part(1.1, 1.1, 0.55, mat(driverC, 0.8), 0.62, 2.0, 0.55, grp);           // torso
+    const headM2 = mat(0xf2c94c, 0.7);
+    part(0.72, 0.72, 0.72, headM2, 0.62, 2.95, 0.55, grp);                   // head
+    part(0.22, 0.9, 0.22, mat(driverC, 0.8), 1.05, 2.1, 0.15, grp);          // steering arm
+    part(0.22, 0.9, 0.22, mat(driverC, 0.8), 0.15, 2.1, 0.15, grp);
+    rec.hitCd = 0;
+    /* pure wall-clock phase: every screen agrees where every car is,
+       forever — no network sync, no drift */
+    const ph0 = wlNum(e.phase, 0, 1e6, 0);
+    rec.tick = dt => {
+      const ph = ph0 + (Date.now() / 1000) * spd;
+      const p = routePos(ph);
+      const a = routePos(ph - 2.2), b = routePos(ph + 2.2);   // look behind/ahead for a smooth heading
+      grp.position.set(p.x, y, p.z);
+      grp.rotation.y = Math.atan2(b.x - a.x, b.z - a.z);
+      for (const wh of wheels) wh.rotation.x += (spd / 0.62) * dt;
+      /* ---- did it clip ME? my own screen yeets me (theirs does them) ---- */
+      if (rec.hitCd > 0) { rec.hitCd -= dt; return; }
+      const dx = player.x - p.x, dz = player.z - p.z;
+      if (dx * dx + dz * dz < 12.5 && player.y < y + 3.6 && player.y + player.h > y) {
+        rec.hitCd = 1.4;                                      // one hit per pass
+        const hl = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+        const vx = (b.x - a.x) / hl, vz = (b.z - a.z) / hl;   // the car's travel direction
+        player.vx += vx * (spd * 1.7 + 16);                  // thrown down the road
+        player.vz += vz * (spd * 1.7 + 16);
+        player.vy = Math.max(player.vy, 46);                  // and UP
+        climbing = false;
+        startYeet(90 + spd);                                  // full Roblox fling, spinning
+        hurtPlayer(dmg);
+        wlToast('You got HIT by a car!', true);
+      }
+    };
+    rec.setGate = ok => { grp.visible = ok; };
+    rec.dispose = () => { scene.remove(grp); };
   },
 
 };
@@ -7123,13 +7414,14 @@ function spawnZombie(x, z, zid, owner) {
   return true;
 }
 
-function damageZombie(z, dmg, ax = player.x, az = player.z) {
+function damageZombie(z, dmg, ax = player.x, az = player.z, kb) {
   if (z.dead || z.ghost) return;           // ghosts are damaged through zdmg events
   z.hp -= dmg;
   z.hurtT = 0.18;
+  const f = (kb != null && isFinite(+kb)) ? clamp(+kb, 0, 90) : V.knockback;   // v20: callers can yeet zombies too
   const dx = z.body.x - ax, dz = z.body.z - az, d = Math.hypot(dx, dz) || 1;
-  z.body.vx += (dx / d) * V.knockback; z.body.vz += (dz / d) * V.knockback;
-  if (z.body.grounded) z.body.vy = 8;
+  z.body.vx += (dx / d) * f; z.body.vz += (dz / d) * f;
+  z.body.vy = Math.max(z.body.grounded ? 8 : z.body.vy, f * 0.55, 8);
   if (z.hp <= 0) {
     z.dead = true; z.deathT = 0; WS.emit('zdie', { i: z.zid }); addSys('Zombie defeated!');
     /* v14: world spawner bounties — the KILLER gets paid, wherever
@@ -7198,7 +7490,8 @@ function updateZombies(dt) {
         z.atkMe += dt;
         if (z.atkMe >= V.zombieCooldown) {
           z.atkMe = 0; z.lungeT = 0.45;
-          hurtPlayer(V.zombieDamage, (mdx / (md || 1)) * 14, (mdz / (md || 1)) * 14);
+          const zk = V.knockback * 0.9;              // v20: zombie shoves follow the knockback rule
+          hurtPlayer(V.zombieDamage, (mdx / (md || 1)) * zk, (mdz / (md || 1)) * zk, zk * 0.8);
         }
       } else z.atkMe = Math.max(0, z.atkMe - dt);
     } else {
@@ -7233,7 +7526,10 @@ function updateZombies(dt) {
         if (z.attackT >= V.zombieCooldown) {
           z.attackT = 0; z.lungeT = 0.45;
           /* damage only MYSELF — a remote victim's own screen hurts them */
-          if (targetIsMe) hurtPlayer(V.zombieDamage, (dx / dist) * 14, (dz / dist) * 14);
+          if (targetIsMe) {
+            const zk = V.knockback * 0.9;            // v20: zombie shoves follow the knockback rule
+            hurtPlayer(V.zombieDamage, (dx / dist) * zk, (dz / dist) * zk, zk * 0.8);
+          }
         }
       } else {
         z.attackT = Math.max(0, z.attackT - dt);
@@ -7285,16 +7581,69 @@ let health = V.maxHealth, timeSinceHurt = 99, lastHealth = -1;
    Tuned live from the Admin menu (V.fallSafeHeight / V.fallMultiplier). */
 let FALL_SAFE_H = 8, FALL_MULT = 10;   /* live-synced from V (§1.5) */
 
+/* ================================================================
+   v20 THE YEET — Roblox-style fling.
+   The rig keeps its exact pose but the whole body tumbles while it
+   flies: pitch + roll spin that pivots around the WAIST (not the
+   feet — see waistPivot below), eases back upright on landing, and
+   rides the state broadcast (`ys`) so every screen flings its ghost
+   copy of you the same way. startYeet(spin) takes a yeet POWER —
+   anything under 16 is a mere shove and doesn't tumble.
+================================================================ */
+const yeet = { a: 0, r: 0, rx: 0, rz: 0, on: false };   // a/r = live angles, rx/rz = rates
+function startYeet(spin) {
+  const s = clamp(+spin || 0, 0, 400);
+  if (s < 16) return;                       // a shove, not a yeet
+  yeet.on = true;
+  yeet.rx = clamp(s * 0.17, 5, 30) * (0.75 + Math.random() * 0.5);   // ~1 rev / 0.4s at full power
+  yeet.rz = clamp(s * 0.10, 3, 20) * (0.5 + Math.random());
+  if (Math.random() < 0.5) yeet.rz = -yeet.rz;
+}
+function tickYeet(dt) {
+  if (yeet.on) {
+    if (player.grounded && player.vy <= 0.1) yeet.on = false;   // landed → recover
+    else { yeet.a += yeet.rx * dt; yeet.r += yeet.rz * dt; return; }
+  }
+  /* recovery: unwind both angles to the nearest full turn, shortest path */
+  const ta = Math.round(yeet.a / (Math.PI * 2)) * Math.PI * 2;
+  const tr = Math.round(yeet.r / (Math.PI * 2)) * Math.PI * 2;
+  if (yeet.a === ta && yeet.r === tr) return;
+  const k = Math.min(1, dt * 13);
+  yeet.a += (ta - yeet.a) * k; yeet.r += (tr - yeet.r) * k;
+  if (Math.abs(ta - yeet.a) < 0.02) yeet.a = ta;
+  if (Math.abs(tr - yeet.r) < 0.02) yeet.r = tr;
+}
+/* v20 WAIST PIVOT — with the rig anchored at its feet, any pitch/roll
+   swings the body around the feet (that was the v19 swimming
+   "pivoting from my feet" complaint). This places the group so the
+   point 2.7 studs up its spine (the waist, scaled with the player)
+   stays exactly where the feet-anchor put it, so tilts and tumbles
+   rotate the body around its MIDDLE — turning while prone spins in
+   place, and a hucked character cartwheels around its center. */
+function waistPivot(obj, px, py, pz, rootY, pitch, roll, s) {
+  const hc = 2.7 * (s || 1);                       // the waist, in world studs
+  const cy = Math.cos(obj.rotation.y), sy = Math.sin(obj.rotation.y);
+  const cr = Math.cos(roll || 0), sr = Math.sin(roll || 0);
+  const cp = Math.cos(pitch || 0), sp2 = Math.sin(pitch || 0);
+  const x1 = -hc * sr, y1 = hc * cr * cp, z1 = hc * cr * sp2;   // Rz then Rx
+  const wx = x1 * cy + z1 * sy, wz = -x1 * sy + z1 * cy;        // then Ry
+  obj.position.set(px - wx, py + (rootY || 0) + hc - y1, pz - wz);
+}
+
 const keys = {};
 let joyFwd = 0, joySide = 0, joyMag = 0, touchJump = false;
 
-function hurtPlayer(dmg, kbx = 0, kbz = 0) {
+function hurtPlayer(dmg, kbx = 0, kbz = 0, spin = 0) {
   if (health <= 0 || V.godMode) return;
   health -= dmg;
   timeSinceHurt = 0;
   flashHurt();
   player.vx += kbx; player.vz += kbz;
-  if (player.grounded) player.vy = Math.max(player.vy, 12);
+  /* v20: the hop scales with the shove — a sword tap still just bumps
+     you, a cannon-hit (or a car) launches you off your feet */
+  const kl = Math.hypot(kbx, kbz);
+  if (player.grounded) player.vy = Math.max(player.vy, Math.min(30, 11 + kl * 0.3));
+  if (kl > 0) startYeet(spin || kl * 0.9);         // v20: big hits tumble
   if (health <= 0) { health = 0; respawn(); }
 }
 function respawn() {
@@ -7304,6 +7653,7 @@ function respawn() {
   player.z = (cp ? cp.z : WORLDS_SPAWN.z) + Math.cos(a) * r;
   player.y = cp ? cp.y + 0.4 : WORLDS_SPAWN.y;
   player.vx = player.vy = player.vz = 0;
+  yeet.on = false; yeet.a = yeet.r = 0;               // v20: respawn upright, mid-fling cancelled
   health = V.maxHealth; timeSinceHurt = 99;
   /* v18: worlds with vars.loseOnDeath drop their weapons on death —
      you re-arm at your reclaim stands (built-in items stay) */
@@ -7493,9 +7843,10 @@ function updateMovement(dt) {
     }
     if (jumpDown) tvy = Math.max(tvy, 9);
     if (keys['c'] || keys['control']) tvy = -8;
-    if (jumpEdge && wDepth < 3.6) {                 // hop out at the surface
-      swimming = false; swimLatch = 0.45;
-      player.vy = JUMPV * 0.95 * myJmp;
+    if (jumpEdge && wDepth < 4.4) {                 // hop out at the surface — v20: WAY easier:
+      swimming = false; swimLatch = 1.2;           // deeper window, longer anti-suck latch,
+      player.vy = JUMPV * 1.15 * myJmp;            // a proper Roblox pop, and your momentum
+      if (len > 0.3) { player.vx += tmpV.x * 9; player.vz += tmpV.z * 9; }   // carries you onto the deck
       Water.splash(player.x, wTop, player.z, false);
     } else player.vy += (tvy - player.vy) * Math.min(1, dt * 5);
     if (moving) yaw += angWrap(Math.atan2(tmpV.x, tmpV.z) - yaw) * Math.min(1, dt * 8);
@@ -7608,12 +7959,19 @@ function updateAnim(dt, t) {
   }
 
   applyChannels(out);
+  tickYeet(dt);                                       // v20: fly the fling / unwind after landing
   if (character.rotation.order !== 'YXZ') character.rotation.order = 'YXZ';
-  character.rotation.x = swimTilt;                  // v19: lie flat while swimming
+  /* v20: swimming lies flat and yeets tumble — both through the WAIST
+     pivot (2.7 studs up, scaled with the player), so the body rotates
+     around its middle exactly like Roblox instead of swinging from
+     its feet, and a hucked character stays looking like itself while
+     it cartwheels across the map. */
+  character.rotation.x = swimTilt + yeet.a;           // v19 lie flat while swimming + v20 tumble
+  character.rotation.z = yeet.r;                     // v20: the fling's roll
+  waistPivot(character, player.x, player.y, player.z, out.rootY, swimTilt + yeet.a, yeet.r, myScale);
   /* first person: the tool is the camera-anchored viewmodel — per-tool
      pose + swing / recoil math live in applyFPToolPose (§8) */
   if (cam.fp) applyFPToolPose(gunKickT > 0 ? gunKickT / 0.14 : 0);
-  character.position.y = player.y + out.rootY;
   CH.forEach(k => APPLIED[k] = out[k]);
 }
 
@@ -7820,6 +8178,7 @@ function createRemote(id, name, admin, x, y, z) {
     anim: 'idle', pAnim: '', animT: 0, phase: 0, vy: 0, scale: 1,
     sm: 1, jm: 1, sc: -1,                          // v11: their stat multipliers (-1 = follow the room rule)
     tool: '', toolMesh: null, toolMeshId: '', sw: -1, gunKick: 0, lastSeen: elapsed,
+    spinRate: 0, spinA: 0, spinR: 0,                 // v20: their live yeet tumble
     ch: { torsoRx: 0, torsoRy: 0, torsoRz: 0, headRx: 0, headRy: 0, headRz: 0,
       armLx: 0, armLz: 0, armRx: 0, armRz: 0, legLx: 0, legRx: 0, rootY: 0 }
   };
@@ -7990,7 +8349,7 @@ WS.on('zdie', d => {
 WS.on('pvp', d => {
   if (d.to !== MP.id) return;
   const kb = d.kb != null ? clamp(+d.kb, 0, 60) : V.knockback;   // v14: per-weapon knockback
-  hurtPlayer(+d.d || 0, (+d.x || 0) * kb, (+d.z || 0) * kb);
+  hurtPlayer(+d.d || 0, (+d.x || 0) * kb, (+d.z || 0) * kb, kb * 1.05);   // v20: hits that hit HARD tumble you
 });
 WS.on('gshot', (d, from) => {
   if (Array.isArray(d.a) && Array.isArray(d.b)) {
@@ -8054,30 +8413,38 @@ WS.on('smite', (d, from) => {
   const x = +d.x || 0, y = +d.y || 0, z = +d.z || 0;
   const dm = Math.max(0, +d.dm || 0);
   const sz = clamp(+d.sz || 4, 0.5, 24);
-  const pw = clamp(+d.pw || 0, 0, 110);
+  const pw = clamp(+d.pw || 0, 0, 300);            // v20: yeet power goes to ELEVEN (300)
   const sp = !!d.sp, rd = clamp(+d.rd || 8, 1, 60);
   spawnLightning(x, y, z);
   spawnExplosionFX(x, y + 1.2, z, sz);
   if (d.id === MP.id) {                            // the bolt found ME
-    const a = Math.random() * Math.PI * 2;         // yeet: random direction, hard
-    player.vx += Math.cos(a) * pw * 0.8;
-    player.vz += Math.sin(a) * pw * 0.8;
-    player.vy = Math.max(player.vy, pw * 0.95);
+    const a = Math.random() * Math.PI * 2;         // yeet: random direction, HARD
+    player.vx += Math.cos(a) * pw * 0.95;
+    player.vz += Math.sin(a) * pw * 0.95;
+    player.vy = Math.max(player.vy, pw * 1.05);
     climbing = false;
+    startYeet(pw * 1.15);                          // v20: hucked, spinning — Roblox fling
     if (dm > 0) hurtPlayer(dm);                    // god mode still gets the ride
     adminBanner(self ? 'You smote yourself.' : 'Smitten by ' + (MP.remotes.get(from) || { name: 'an admin' }).name);
   } else if (sp) {                                 // splash: am I close enough?
     const dist = Math.hypot(player.x - x, player.y + 2.6 - y, player.z - z);
     if (dist < rd) {
-      const k = clamp(1.2 - dist / rd, 0.25, 1);
+      const k = clamp(1.15 - dist / rd, 0.3, 1);
       const dx = player.x - x, dz = player.z - z, dl = Math.hypot(dx, dz) || 1;
-      hurtPlayer(dm * k, dx / dl * pw * 0.5, dz / dl * pw * 0.5);
+      /* v20: the splash is a real yeet now — horizontal shove, LIFT,
+         and the tumble — being next to a smite actually throws you */
+      player.vx += dx / dl * pw * 0.8 * k;
+      player.vz += dz / dl * pw * 0.8 * k;
+      player.vy = Math.max(player.vy, pw * 0.55 * k);
+      climbing = false;
+      startYeet(pw * 0.95 * k);
+      hurtPlayer(dm * k);
     }
   }
   for (const zb of zombies) {                      // zombies near the blast too
     if (zb.dead || zb.owner !== MP.id) continue;   // exactly one screen counts it (like 'zdmg')
     if (Math.hypot(zb.body.x - x, zb.body.z - z) < Math.max(rd, sz))
-      damageZombie(zb, Math.max(1, dm * 0.8), x, z);
+      damageZombie(zb, Math.max(1, dm * 0.8), x, z, pw * 0.6);   // v20: blast knockback, not the sword's
   }
 });
 
@@ -8403,6 +8770,7 @@ const MP = {
     if (m.sm != null) r.sm = clamp(+m.sm || 1, 0.25, 4);      // v11: their stat multipliers too
     if (m.jm != null) r.jm = clamp(+m.jm || 1, 0.25, 4);
     if (m.sc === -1 || m.sc === 0 || m.sc === 1) r.sc = m.sc;  // -1 = follows the room rule
+    if (m.ys != null) r.spinRate = clamp(+m.ys || 0, 0, 40);   // v20: their live yeet spin
     r.lastSeen = elapsed;
   },
 
@@ -8421,7 +8789,8 @@ const MP = {
           yw: +(climbing ? (climbSide > 0 ? Math.PI : 0) : yaw).toFixed(2),
           an: animId, tl: it ? it.id : '', sw: +(swingT < 0 ? -1 : swingT).toFixed(2),
           sz: +myScale.toFixed(2),
-          sm: +mySpd.toFixed(2), jm: +myJmp.toFixed(2), sc: mySzSc == null ? -1 : (mySzSc ? 1 : 0)   // v11 stat multipliers (late joiners)
+          sm: +mySpd.toFixed(2), jm: +myJmp.toFixed(2), sc: mySzSc == null ? -1 : (mySzSc ? 1 : 0),   // v11 stat multipliers (late joiners)
+          ys: yeet.on ? +clamp(yeet.rx, 0, 40).toFixed(1) : 0      // v20: I'm being YEETED — spin your ghost of me
         });
       }
       this.pingTO -= dt;
@@ -8449,14 +8818,29 @@ const MP = {
       r.tilt = (r.tilt || 0) + (((r.anim === 'swim') ? r.swimMv * 1.25 : 0) - (r.tilt || 0)) * Math.min(1, dt * 6);
       if (r.sw >= 0) { r.sw += dt; if (r.sw > 0.42) r.sw = -1; }          // their sword swing
       if (r.gunKick > 0) r.gunKick -= dt;                                 // their gun recoil
+      /* v20: their YEET — they're spinning, so spin our ghost of them the
+         same way (rate from their broadcast); when they land the rate
+         drops to 0 and we unwind to upright, shortest path */
+      if (r.spinRate > 0) {
+        r.spinA = (r.spinA || 0) + r.spinRate * dt;
+        r.spinR = (r.spinR || 0) + r.spinRate * 0.62 * dt;
+      } else if (r.spinA || r.spinR) {
+        const ta = Math.round(r.spinA / (Math.PI * 2)) * Math.PI * 2;
+        const tr = Math.round(r.spinR / (Math.PI * 2)) * Math.PI * 2;
+        const k2 = Math.min(1, dt * 13);
+        r.spinA += (ta - r.spinA) * k2; r.spinR += (tr - r.spinR) * k2;
+        if (Math.abs(ta - r.spinA) < 0.02) r.spinA = 0;
+        if (Math.abs(tr - r.spinR) < 0.02) r.spinR = 0;
+      }
       remoteToolMesh(r);
       remotePose(r, t);
       const c = r.ch, p = r.pivots;
-      p.g.position.set(r.x, r.y + c.rootY, r.z);
       if (p.g.rotation.order !== 'YXZ') p.g.rotation.order = 'YXZ';
       p.g.rotation.y = r.yaw;
-      p.g.rotation.x = r.tilt || 0;              // v19: swimmers lie flat
+      p.g.rotation.x = (r.tilt || 0) + (r.spinA || 0);       // v19 swimmers lie flat · v20 + tumble
+      p.g.rotation.z = r.spinR || 0;                          // v20: the fling's roll
       p.g.scale.setScalar(r.scale || 1);         // admin size (v10)
+      waistPivot(p.g, r.x, r.y, r.z, c.rootY, (r.tilt || 0) + (r.spinA || 0), r.spinR || 0, r.scale || 1);   // v20: waist pivot, not feet
       p.torsoPivot.rotation.set(c.torsoRx, c.torsoRy, c.torsoRz);
       p.neckPivot.rotation.set(c.headRx, c.headRy, c.headRz);
       p.armL.rotation.set(c.armLx, 0, c.armLz);
@@ -9105,7 +9489,7 @@ function buildSettingsTab() {
   list.append(mkEl('div', 'msection', 'Shadows'));
   list.append(bindSeg('shadowQuality', 'Shadow Quality', [-1, 0, 1024, 2048, 4096],
     v => v === -1 ? 'Auto' : v === 0 ? 'Off' : v >= 4096 ? 'Ultra' : v >= 2048 ? 'High' : 'Low'));
-  list.append(bindSlider('shadowDistance', 'Shadow Distance', [0, 140, 5],
+  list.append(bindSlider('shadowDistance', 'Shadow Distance', [0, 400, 5],
     v => v === 0 ? 'Auto' : SHADOW_SD < v - 0.5
       ? Math.round(SHADOW_SD) + ' of ' + Math.round(v) : Math.round(v) + ' studs'));
   list.append(mkEl('div', 'msection', 'Camera'));
@@ -9115,7 +9499,7 @@ function buildSettingsTab() {
   list.append(bindToggle('occlusion', 'Camera Occlusion', 'Pull the camera in when a wall blocks the view.'));
   list.append(mkEl('div', 'msection', 'Display'));
   list.append(bindToggle('showFps', 'Show FPS &amp; Draw Calls'));
-  list.append(bindSlider('fogDistance', 'Fog / View Distance', [0, 300, 10],
+  list.append(bindSlider('fogDistance', 'Fog / View Distance', [0, 600, 10],
     v => v === 0 ? 'Auto' : String(Math.round(v))));
   list.append(mkEl('div', 'msection', 'Identity'));
   const ibr = mkEl('div', 'btnrow');
@@ -9140,6 +9524,8 @@ function rebuildAdminTab() {
   adminLiveFns.length = 0;
   adminPlayerLiveFns = [];
   adminPlayersPane = null;
+  adminPlayerMenuPane = null;
+  adminBuilt = true;                  // v20: this content IS the menu — never build on top of it
   buildAdminTab();
   refreshValues();
   refreshIcons();
@@ -9467,7 +9853,7 @@ function openPlayerMenu(t) {
   pane.append(srow);
   pane.append(bindSlider('smiteDmg', 'Lightning Damage', [0, 150, 1]));
   pane.append(bindSlider('smiteSize', 'Explosion Size (studs)', [1, 20, 0.5]));
-  pane.append(bindSlider('smitePower', 'Yeet Power', [0, 90, 1]));
+  pane.append(bindSlider('smitePower', 'Yeet Power', [0, 300, 5]));
   pane.append(bindToggle('smiteSplash', 'Splash Damage', 'Players and zombies close to the blast take damage (and get pushed) too.'));
   pane.append(bindSlider('smiteRadius', 'Splash Radius (studs)', [1, 30, 0.5]));
 
@@ -9575,6 +9961,16 @@ MP.paintOnline = () => { _paintOnline(); buildAdminPlayers(); };
 
 function buildAdminTab() {
   const list = document.getElementById('admin-list');
+  /* v20: this build is IDEMPOTENT now. The world script's first tick
+     calls rebuildAdminTab() while the menu is closed, and the old code
+     APPENDED to whatever was there — so opening the menu afterwards
+     laid a SECOND full copy over the first (the "everything shows
+     itself twice" bug). Every build starts from a clean slate. */
+  list.innerHTML = '';
+  adminLiveFns.length = 0;
+  adminPlayerLiveFns = [];
+  adminPlayersPane = null;
+  adminPlayerMenuPane = null;
 
   /* ---- locked: enter the admin code to unlock (once, forever) ---- */
   if (!isAdmin) {
@@ -9671,6 +10067,11 @@ function buildAdminTab() {
 
   /* ================= RULES — the whole room, now and for joiners ================= */
   const wp = pane('rules');
+  /* v20: worlds can preset their own rules (vars.rules) — say which
+     world this room's rules come from, so it's obvious why the numbers
+     differ between maps */
+  wp.append(srvRow('This world\u2019s rules', () => GameLogic.active && GameLogic.worldRules
+    ? Worlds.name() + ' preset' : 'Factory defaults'));
   wp.append(bindSlider('dayTime', 'Time of Day', [0, 24, 0.1], fmtClock));
   wp.append(bindSlider('daySpeed', 'Day Cycle Speed', [0, 2, 0.05],
     v => v === 0 ? 'Frozen' : (+v).toFixed(2) + ' h/s'));
@@ -9800,6 +10201,7 @@ const _cA = new THREE.Color(), _cB = new THREE.Color(), _cC = new THREE.Color();
 const _sunDir = new THREE.Vector3();
 
 function updateDayNight(dt) {
+  skyMesh.position.copy(camera.position);      // v20: the dome rides the camera — sky everywhere
   if (V.daySpeed > 0) V.dayTime = (V.dayTime + V.daySpeed * dt) % 24;
   const e = Math.sin(((V.dayTime - 6) / 12) * Math.PI);   // sun elevation, -1..1
   const az = ((V.dayTime - 6) / 12) * Math.PI;            // east -> west sweep
