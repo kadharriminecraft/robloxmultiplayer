@@ -31,8 +31,9 @@ v2 world is a place **plus a game**:
 
   "items":   [ … ],                     // §4 — custom swords, guns, food
   "build":   [ … ],                     // §5 — static parts (walls, floors…)
-  "economy": { … },                     // §6 — money
+  "economy": { … },                     // §6 — money (+ queue: visible pads)
   "logic":   [ … ],                     // §7 — the live entities
+  "vars":    { … },                     // v16 — engine overrides (maxZombies)
   "script":  "…"                        // §9 — optional sandboxed JS
 }
 ```
@@ -42,11 +43,11 @@ A `template` world (the built-in map) may also carry `items` / `build`
 / `economy` / `logic` / `script` — everything below applies the same.
 
 **How deep can it go?** The reference world `tycoon-world.json` is a
-complete 4-plot tycoon: claiming plots, an 8-button upgrade tree per
-plot, droppers feeding conveyors into collectors, income multipliers, a
-weapon-shop NPC selling 5 custom weapons, night zombie waves with kill
-bounties, teleporters, checkpoints, buff pads and a $25,000 win goal —
-in ~1,000 lines of pure JSON, no code.
+complete 4-plot tycoon: claiming plots, a max-4 ranked buy-pad queue,
+droppers spouting over belts into collectors that fill raidable vault
+plates, weapon cases, a pay-per-wave zombie pad, per-plot auto resets
+and admin chat commands — in pure JSON + a short script, no engine
+code.
 
 ---
 
@@ -71,12 +72,17 @@ Unchanged from v1 — every field:
   "waterLevel": 10,                    // ocean surface height in studs (0 = no water)
   "base": 30,                          // island plateau top height before noise
   "oceanFloor": 3,                     // seabed height
-  "noise": [                           // 1-4 octaves, summed. smooth value noise
+  "noise": [                           // 0-4 octaves, summed. smooth value noise. [] = perfectly flat
     { "scale": 64, "amp": 5.0 },      //   scale = stud wavelength (8-400), amp = stud height
     { "scale": 21, "amp": 1.8 }
   ],
   "island": {                          // OPTIONAL — omit for a flat square map
     "radius": 62, "edge": 26, "rim": 0.55
+  },
+  "border": {                          // OPTIONAL (v15) — blocky mountain ring that walls the map in
+    "width": 26, "height": 30,        //   how many studs wide / how tall at the rim
+    "steps": 7, "jitter": 1.4,         //   terrace count (bigger = smoother) + per-column crumbliness
+    "block": "stone"                   //   the block the mountains are made of
   },
   "surface": {                         // which block shows on top (checked top-down):
     "default": "grass",
@@ -99,8 +105,10 @@ seabed, smoothstep across `rim`); height = `round(lerp(oceanFloor,
 base + noise, t))`; surface block first-match underwater → beach →
 edge → default. Everything is a pure function of `seed`, so every
 client generates the identical world without syncing a byte. For a
-build-heavy game (tycoons!) use a big flat-ish map: small noise amps,
-no island, `waterLevel` 0.
+build-heavy game (tycoons!) use a big flat map: `noise: []`, no
+island, `waterLevel` 0 — and a `border` ring for natural walls.
+**v15 perf**: terrain physics colliders are greedy-merged (a flat
+260×260 arena = ONE collider), so big flat maps are cheap.
 
 ---
 
@@ -116,7 +124,7 @@ remote players hold them, they can be dropped and picked up.
   "id": "void-blade",              // REQUIRED a-z0-9- 2-32, unique in this world
   "name": "Void Blade",            // REQUIRED <= 24 chars (hotbar + shop)
   "icon": "swords",                // lucide icon name, see whitelist below
-  "kind": "sword",                 // REQUIRED "sword" | "gun" | "consumable"
+  "kind": "sword",                 // REQUIRED "sword" | "gun" | "consumable" | "tool"
 
   "stats": {                       // all optional, sane defaults per kind
     "damage": 35,                  //   damage to zombies (1-500)
@@ -132,6 +140,7 @@ remote players hold them, they can be dropped and picked up.
     "heal": 60                     //   consumable: health restored
   },
   "mesh": {                        // colors/sizes of the built-in mesh builders
+    "style": "minigun",            //   v15: gun "minigun" = rotary barrels; tool "coil" | "pet"
     "sword": { "blade": "#8a5cff", "guard": "#2a1f4a", "grip": "#1a1428", "len": 3.2, "glow": 0.85 },
     "gun":   { "body": "#1e2b26", "accent": "#39d353", "len": 1.5, "glow": 0.7,
                "tracer": "#6dffa8", "flash": 1.4 },
@@ -143,6 +152,15 @@ remote players hold them, they can be dropped and picked up.
 - `glow` (0-1) makes the blade/barrel **emit light** — a glowing
   energy weapon. `tracer` tints the bullet streak; `flash` scales the
   muzzle flash.
+- **`tool` items (v15)** are held gadgets — no swing, no fire:
+  - `stats.speed` (1-3): while HELD you run this fast (1.7 = a speed
+    coil). `stats.jump` (1-3): higher jumps.
+  - `stats.pet: true`: a deployable companion — click while holding
+    to deploy/recall. It hovers at your shoulder, chases the nearest
+    enemy player or zombie inside `stats.radius` (default 26) and
+    strikes LIGHTNING for `stats.damage` every ~0.9s once inside
+    `stats.zapRange` (default 10). Mesh `style: "pet"` builds the
+    drone body; everyone in the room sees the orb and the bolts.
 - Icon whitelist (lucide): `coins gem star crown trophy medal sword
   swords axe hammer pickaxe wand sparkles flame zap crosshair target
   bomb rocket shield heart apple gift box key lock anchor leaf droplet
@@ -194,7 +212,7 @@ players buy buttons (or claim plots):
 ## 6. `economy` — money
 
 ```json
-{ "name": "Gold", "symbol": "$", "icon": "coins", "start": 100, "goal": 25000 }
+{ "name": "Gold", "symbol": "$", "icon": "coins", "start": 100, "goal": 25000, "queue": 4 }
 ```
 
 - Money is **per player, per world, saved on their device** — rejoin
@@ -204,8 +222,11 @@ players buy buttons (or claim plots):
 - `goal` is optional: the moment a player's balance reaches it, every
   screen gets the win banner + confetti.
 - Money NEVER syncs into other players' wallets — income comes from
-  YOUR collectors (§7 droppers), `grant` buttons, zombie bounties and
-  script `Game.addMoney`.
+  YOUR collectors (§7 droppers; v16: they fill the plot's **vault
+  plate**, §7.15), `grant` buttons, zombie bounties and script
+  `Game.addMoney`.
+- `queue` (v16, 1-6, default 4) — how many of a plot's ranked buy
+  pads are visible at once; see §7.2 `order`.
 
 ---
 
@@ -237,20 +258,36 @@ forever — until an admin resets the world (§10).
 ### 7.2 `button` — the buy pad
 ```json
 { "id": "ne-b-drop2", "type": "button", "pos": [-6, "ground", 7.5],
-  "label": "Dropper 2", "cost": 150, "plot": "plot-ne",
+  "label": "Dropper 2", "cost": 150, "plot": "plot-ne", "order": 3,
   "maxBuys": 1, "costScale": 2.2,
   "give": "void-blade", "grant": 500, "incomeMult": 2,
+  "requires": ["plot-ne"],
   "patch": { "ne-drop1": { "every": 2.5 } } }
 ```
-Stand on the pad and press **E**. Green when you can afford it, gray
-when you can't, price on the billboard above. If `plot` is set, only
-the plot owner can buy. On buy (every screen applies it instantly):
+**STEP ON IT to buy** (v15 — no E key). A small floating label
+(name + price) hovers and bobs above the pad; the pad glows green
+when you can afford it, gray when you can't, and nags politely at
+most every 2.4s while you stand there broke. `requires` hides the
+PAD ITSELF until its tier unlocks — gate buttons on earlier buttons
+and they **pop in** the moment the requirement is bought. That is how
+you build progressive reveal trees (claim → starter pads → walls →
+second floor…). If `plot` is set, only the plot owner can buy
+(step-on is silent for everyone else). On buy (every screen applies
+it instantly):
 - `requires` gates referencing this button open (buildings appear…)
-- `give` puts a world item in the buyer's hotbar; `grant` pays them
+- `give` puts a world item in the buyer's hotbar (v16: the pad renders
+  as a glass **weapon case** with the item spinning inside); `grant` pays them
 - `incomeMult` multiplies the plot's collector income (stacks ×2 ×3…)
 - `patch` retunes OTHER entities live (see the whitelist below)
 - `maxBuys` > 1 with `costScale` makes repeatable upgrades
   (`cost × costScale^buysSoFar`)
+
+**v16 `order` (1-9999) + `economy.queue`** — the PAD QUEUE. Buttons
+with a `plot` AND an `order` are ranked: only the first `queue`
+(default 4) open + unbought pads are visible; buy one and the next
+ranks up with a pop. A clean progression line instead of a wall of
+pads. Buttons without `order` (weapon cases, event pads) are never
+queued.
 
 `patch` may only change these fields, on these types:
 `dropper.every value` · `conveyor.speed` · `collector.value` ·
@@ -261,12 +298,20 @@ the plot owner can buy. On buy (every screen applies it instantly):
 ```json
 { "id": "ne-drop1", "type": "dropper", "pos": [8, "ground", 2],
   "plot": "plot-ne", "every": 4, "value": 5, "requires": ["plot-ne"],
-  "color": "#4a5568", "drop": { "color": "#f5c542", "size": 0.95 } }
+  "color": "#4a5568", "dropOff": [0, 3.2],
+  "drop": { "color": "#f5c542", "size": 0.95 } }
 ```
-Hangs over your conveyor and drops a gold cube every `every` seconds —
-**but only while the plot owner is in the world** (their client
-simulates it; income pauses when they leave — classic tycoon rules).
-`value` is what the collector pays per drop; `drop` styles the cube.
+Stands beside your conveyor and drops a gold cube every `every`
+seconds — **but only while the plot owner is in the world** (their
+client simulates it; income pauses when they leave — classic tycoon
+rules). `value` is what the collector pays per drop; `drop` styles
+the cube.
+
+**v16 `dropOff: [ox, oz]` (WORLD-axis offset, ±8)** — where the spout
+releases the ore, relative to the machine. Put the offset over the
+BELT: the drop falls onto the conveyor (not onto the dropper's own
+collider — that was the v15 "drops get stuck" bug) and rides to the
+collector. The machine draws a spout arm to the drop point.
 
 ### 7.4 `conveyor` — carries players AND drops
 ```json
@@ -361,6 +406,32 @@ as they approach; with `requires` it opens forever once bought.
 ```
 A billboard on a post, up to 4 lines, always facing the reader.
 
+### 7.15 `claimer` — the MONEY VAULT plate (v16)
+```json
+{ "id": "ne-vault", "type": "claimer", "pos": [11, "ground", -3],
+  "plot": "plot-ne", "label": "Money Vault",
+  "steal": 0.25, "cool": 60, "requires": ["plot-ne"] }
+```
+The plot's bank. A gold dais with a live `$balance` hover label —
+this is where collector income lands now (instead of the owner's
+wallet). **The owner steps on it to sweep the whole balance** into
+their wallet. **Anyone else who steps on it skims `steal` (default
+25%) of what's inside** — then the plate seals for `cool` seconds
+(default 60). Steal a lot and the owner sees a warning toast. Build
+walls if you want to keep your gold.
+
+### 7.16 `zwave` — the zombie-wave pad (v16)
+```json
+{ "id": "wave", "type": "zwave", "pos": [0, "ground", 0], "label": "Zombie Wave",
+  "cost": 500, "count": 4, "radius": 50, "reward": 100 }
+```
+A skull totem. **Step on + pay `cost` and `count` zombies rise at
+random spots in a `radius` ring around the pad** — through the normal
+zspawn channel, so every screen agrees. **Spammable** as long as you
+can pay; the room's zombie cap (`vars.maxZombies`, §3) is the only
+brake. Kills pay `reward` to the killer. With this you control when
+zombies exist at all — no default spawning.
+
 ---
 
 ## 8. How it all syncs (multiplayer model)
@@ -369,15 +440,20 @@ A billboard on a post, up to 4 lines, always facing the reader.
 |---|---|---|
 | money | each player | saved on their device; shown in their HUD |
 | buys / claims / pickups | one event each | `tyc` events — every client applies them, so gated buildings unfold on every screen at once |
-| drops | plot owner's client | `dspawn` event + deterministic sim everywhere; only the owner's client pays the money in |
-| zombie waves | room leader | existing zombie replication; `zrew` pays the killer |
-| world progress | the relay (v6) | stored in the room's Durable Object storage and pushed to every joiner — **your tycoon survives everyone leaving** |
-| late joiners | peers + relay | new clients ask (`tycq`); everyone answers chunked snapshots; the relay also pushes its stored copy |
+| plot vaults (v16) | plot owner's client | `tyc` `bank` events throttle-sync the balance to every screen + the relay's stored state |
+| vault raids (v16) | the raider's client | the cut lands in the raider's wallet; the owner gets a `rob` toast; the balance syncs |
+| plot resets (v16) | every client | when a player leaves (`bye`), their plots reset to day one everywhere; a `tyc` `pr` event also clears the relay's stored copy |
+| drops | plot owner's client | `dspawn` event + deterministic sim everywhere; only the owner's client fills the vault |
+| zombie waves | the pad presser | normal zombie replication; `zrew` pays the killer |
+| world progress | the relay (v6+) | stored in the room's Durable Object storage and pushed to every joiner — **your tycoon survives everyone leaving** (a v7 relay also stores vaults + plot resets) |
+| late joiners | peers + relay | new clients ask (`tycq`); everyone answers chunked snapshots (incl. vault totals); the relay also pushes its stored copy |
 
 The relay stays dumb: it just stores + forwards the compact state map.
 An admin's **Reset World Progress** (Server tab) broadcasts a reset,
 clears the relay's copy, and every plot/button/pickup returns to day
-one (player money is kept).
+one (player money is kept). v16 also auto-resets a plot when its
+owner leaves the world, and ignores stored claims whose owner isn't
+in the room anymore (works even against an old v6 relay).
 
 ---
 
@@ -395,7 +471,10 @@ Game.onNet('boss', function (d) { /* custom net events */ });
 
 **Hooks:** `tick(dt)` (visuals only!) · `join(name)` · `buy(label, buyer)`
 · `claim(plotId, ownerName)` · `collect(value, plotId)` · `win(name)`
-· `tp(entityId)`.
+· `tp(entityId)` · `chat(text, name, isLocal)` · `leave(playerId)` ·
+`cmd(text)` (v16: a chat line starting with `/` — return `true` to
+claim it; claimed lines are NOT sent as player chat) ·
+`zwave(count)` (v16: someone pressed a zombie-wave pad).
 
 **API:** `Game.money()` · `Game.addMoney(n)` · `Game.spendMoney(n)` ·
 `Game.give(itemId)` · `Game.heal(n)` · `Game.hurt(n)` ·
@@ -404,7 +483,12 @@ Game.onNet('boss', function (d) { /* custom net events */ });
 `Game.myId()` · `Game.time()` · `Game.dayTime()` · `Game.config` (the
 whole recipe, read-only) · `Game.after(sec, fn)` · `Game.every(sec, fn)`
 (local timers — self effects) · `Game.broadcast(key, data)` /
-`Game.onNet(key, fn)` (custom synced events ≤ 700 B) · `Game.log(…)`.
+`Game.onNet(key, fn)` (custom synced events ≤ 700 B) · `Game.log(…)` ·
+(v16 admin helpers) `Game.tuneItem(itemId, stats)` — retune a weapon
+or pet LIVE with validator clamps · `Game.itemStats(itemId)` — read
+the live stats · `Game.zombies(n, x, z, r)` — spawn a wave around a
+point · `Game.resetWorld()` — broadcast a full reset ·
+`Game.resetPlot(plotId)`.
 
 **Rules the linter enforces (the script is REJECTED if it uses any):**
 `fetch XMLHttpRequest WebSocket localStorage sessionStorage indexedDB
@@ -427,20 +511,26 @@ Everything is checked on load; ANY failure = the world never appears
 2. `id` `^[a-z0-9][a-z0-9-]{2,31}$`, unique, not `baseplate`.
 3. `kind` `template` or `terrain`; terrain fields as §3 (size 64-400,
    waterLevel < base, ≤ 4 noise octaves 8-400 / 0-30, island
-   radius + edge ≤ max(size)/2, palette `#rrggbb`).
+   radius + edge ≤ max(size)/2, `border` width 4-80 / height 1-120 /
+   steps 1-12 / jitter 0-3 and width×2 < min(size), palette
+   `#rrggbb`).
 4. Spawn inside the map (`|x| < size/2 - 8`, same for z).
 5. `items` ≤ 24; ids `^[a-z0-9][a-z0-9-]{1,31}$` unique; kinds
-   `sword|gun|consumable`; stats within §4 ranges; mesh colors hex;
-   icons from the §4 whitelist.
+   `sword|gun|consumable|tool`; stats within §4 ranges (tools:
+   speed/jump 1-3, pet radius 8-60, zapRange 4-30); mesh colors hex;
+   mesh.style ∈ `coil|minigun|pet`; icons from the §4 whitelist.
 6. `build` ≤ 400 parts; pos `[-1000..1000, -200..500 | "ground",
    -1000..1000]`; sizes 0.1-220; material/shape from the lists;
    repeat `[1-40, ±500, ±500]`.
 7. `economy`: name ≤ 16, symbol ≤ 3 chars, start/goal 0-10^9, icon
-   whitelisted.
+   whitelisted, `queue` 1-6. `vars` (optional): `maxZombies` 1-40
+   (applied on load, restored on world exit).
 8. `logic` ≤ 160; unique ids; per-type fields within §7 ranges; every
    `requires`/`plot`/`give`/`shop`/`pickup` reference must EXIST;
    `patch` keys must be §7.2-whitelisted fields on patchable types;
-   npc lines ≤ 6 × 140 chars; shops ≤ 8 entries.
+   npc lines ≤ 6 × 140 chars; shops ≤ 8 entries; button `order` 1-9999;
+   dropper `dropOff` two × ±8; claimer `steal` 0.05-0.9 / `cool` 5-600;
+   zwave `cost` 0-10^9 / `count` 1-8 / `radius` 10-120 / `reward` 0-10^4.
 9. `script` ≤ 8000 chars and lint-clean (§9).
 
 ## 11. Publishing checklist
@@ -458,11 +548,18 @@ Everything is checked on load; ANY failure = the world never appears
 ## 12. The reference game — tycoon-world.json
 
 `tycoon-world.json` in this folder is a complete, commented-by-shape
-example of every feature: 4 mirrored plots (each with claim door,
-conveyor + 3 buyable droppers + collector, 8-button upgrade chain
-including income multipliers and a MEGA dropper), a central plaza with
-a weapon-shop NPC (5 custom items: two swords, two guns, one food),
-free pickups, speed/launch pads, teleporters to each plot,
-checkpoints, night zombie spawners with bounties, killbrick pits, the
-`$25,000` goal, and a 6-line world script. Copy it, reskin it, ship
-it.
+example of every v16 feature: a perfectly flat 320×320 arena walled
+by a blocky stone `border` mountain ring, a CLEAN central battlefield
+(no clutter, no default zombies — just the **$500 zombie-wave skull
+pad** and a ring of 8 **weapon cases** you step on to buy), 4 BIG
+46×46 plots with a 36×30 two-story fortress shell, a day-one state of
+base plate + claim door + conveyor belt ONLY, a **max-4 buy-pad
+queue** per plot (`order` + `economy.queue`) that pops the next pad
+in as you progress, droppers that spout OVER the belt (`dropOff`)
+into the collector → the plot's **MONEY VAULT plate** (owner sweeps,
+raiders skim 25% with a 60s seal), a 10-button upgrade tree (FREE
+dropper → faster/2nd/3rd droppers → walls → taller walls + towers →
+2nd floor + stairs → MEGA dropper → roof fortress → DIAMOND
+dropper), `vars.maxZombies: 24`, auto plot reset when an owner
+leaves, admin chat commands (`/money /give /weapon /pet /zombies
+/reset /help`), and the `$40,000` goal. Copy it, reskin it, ship it.
