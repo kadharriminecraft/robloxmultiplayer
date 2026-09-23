@@ -23,10 +23,12 @@ import baseplate from './baseplate.json';
 import islandWorld from './island-world.json';
 import tycoonWorld from './tycoon-world.json';
 import neighborhoodWorld from './neighborhood-world.json';
+import obbyWorld from './obby-world.json';
 
 export const WORLD_LIST = [
   baseplate,
   islandWorld,
   tycoonWorld,
-  neighborhoodWorld
+  neighborhoodWorld,
+  obbyWorld
 ];
