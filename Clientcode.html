@@ -589,6 +589,7 @@
           <button class="abtn" id="mp-rejoin">Rejoin the world</button>
         </div>
         <div class="btnrow">
+          <button class="abtn" id="mp-reset">Reset Character</button>
           <button class="abtn danger" id="mp-leave">Leave Game</button>
         </div>
       </div>
@@ -805,7 +806,9 @@ const DEFAULTS = {
   dayTime: 10.2, daySpeed: 0,
   // smite (admin lightning) + player-size stat scaling — room rules too (§1.6)
   smiteDmg: 70, smiteSize: 4, smitePower: 80, smiteSplash: true, smiteRadius: 12,
-  sizeScaleStats: true
+  sizeScaleStats: true,
+  // v21 NPC cars (worlds with car entities) — room rules
+  carSpeed: 1, carYeet: 45, carDamage: 25
 };
 const V = Object.assign({}, DEFAULTS);
 
@@ -830,7 +833,8 @@ const RULE_KEYS = ['maxHealth', 'healthRegen', 'regenDelay',
   'swordDamage', 'swordPvpDamage', 'gunDamage', 'knockback',
   'zombieHealth', 'zombieDamage', 'zombieSpeed', 'zombieCooldown', 'maxZombies',
   'zoomMin', 'zoomMax',
-  'smiteDmg', 'smiteSize', 'smitePower', 'smiteSplash', 'smiteRadius', 'sizeScaleStats'];
+  'smiteDmg', 'smiteSize', 'smitePower', 'smiteSplash', 'smiteRadius', 'sizeScaleStats',
+  'carSpeed', 'carYeet', 'carDamage'];   // v21: NPC traffic tuning
 let applyingRoomRules = false;      // applying a received batch never re-broadcasts it
 let rrulesTO = null;
 function queueRuleSync(delay) {     // throttled — slider drags collapse into one message
@@ -2933,7 +2937,8 @@ function validateGameLogic(w) {
   const items = new Set(['sword', 'gun', 'apple']);
   const TYPES = ['button', 'claim', 'dropper', 'conveyor', 'collector', 'killbrick',
     'teleport', 'checkpoint', 'pad', 'npc', 'spawner', 'pickup', 'door', 'sign',
-    'claimer', 'zwave', 'swing', 'laser', 'upgrader', 'car'];   // v16 vault+waves · v18 swings · v19 lasers · v20 CARS
+    'claimer', 'zwave', 'swing', 'laser', 'upgrader', 'car', 'mover', 'lamp',
+    'spinner', 'blink'];   // v16 vault+waves · v18 swings · v19 lasers · v20 CARS · v21 MOVERS+LAMPS · v21.1 SPINNERS+BLINKS (obby kit)
 
   /* items[] — custom weapons + consumables */
   if (w.items != null) {
@@ -3147,6 +3152,34 @@ function validateGameLogic(w) {
           if (e.driver != null && !hex(e.driver)) return 'car "' + e.id + '" bad driver color';
           if (e.phase != null && !num(e.phase, 0, 1e6)) return 'car "' + e.id + '" bad phase';
           break;
+        case 'mover':                                                                                              // v21
+          if (e.to != null && (!Array.isArray(e.to) || e.to.length !== 3 || !e.to.every(v => num(v, -220, 220)))) return 'mover "' + e.id + '" bad to';
+          if (e.speed != null && !num(e.speed, 0.2, 40)) return 'mover "' + e.id + '" bad speed';
+          if (e.pause != null && !num(e.pause, 0, 8)) return 'mover "' + e.id + '" bad pause';
+          if (e.phase != null && !num(e.phase, 0, 1e6)) return 'mover "' + e.id + '" bad phase';
+          if (e.color != null && !hex(e.color)) return 'mover "' + e.id + '" bad color';
+          if (e.size != null && (!Array.isArray(e.size) || e.size.length !== 3 || !e.size.every(v => num(v, 1, 60)))) return 'mover "' + e.id + '" bad size';
+          break;
+        case 'lamp':                                                                                              // v21
+          if (e.color != null && !hex(e.color)) return 'lamp "' + e.id + '" bad color';
+          if (e.intensity != null && !num(e.intensity, 0.1, 4)) return 'lamp "' + e.id + '" bad intensity';
+          if (e.range != null && !num(e.range, 8, 80)) return 'lamp "' + e.id + '" bad range';
+          break;
+        case 'spinner':                                                                                           // v21.1 obby kit
+          if (e.speed != null && !num(e.speed, -360, 360)) return 'spinner "' + e.id + '" bad speed';
+          if (e.height != null && !num(e.height, 0, 20)) return 'spinner "' + e.id + '" bad height';
+          if (e.arms != null && !num(e.arms, 1, 4)) return 'spinner "' + e.id + '" bad arms';
+          if (e.color != null && !hex(e.color)) return 'spinner "' + e.id + '" bad color';
+          if (e.kill != null && typeof e.kill !== 'boolean') return 'spinner "' + e.id + '" bad kill';
+          if (e.phase != null && !num(e.phase, 0, 1e6)) return 'spinner "' + e.id + '" bad phase';
+          if (e.damage != null && !num(e.damage, 1, 5000)) return 'spinner "' + e.id + '" bad damage';
+          break;
+        case 'blink':                                                                                             // v21.1 obby kit
+          if (e.period != null && !num(e.period, 1, 30)) return 'blink "' + e.id + '" bad period';
+          if (e.on != null && !num(e.on, 0.15, 0.85)) return 'blink "' + e.id + '" bad on';
+          if (e.phase != null && !num(e.phase, 0, 1e6)) return 'blink "' + e.id + '" bad phase';
+          if (e.color != null && !hex(e.color)) return 'blink "' + e.id + '" bad color';
+          break;
         case 'sign':
           if (e.width != null && !num(e.width, 2, 24)) return 'sign "' + e.id + '" bad width';
           if (e.style != null && !['board', 'wall', 'float'].includes(e.style)) return 'sign "' + e.id + '" bad style';
@@ -3204,9 +3237,23 @@ function onPresence(list) {
     });
   }
   GLOBAL.at = elapsed;
-  MP.paintOnline();
-  renderWorldsTab();
-  if (typeof menuOpen !== 'undefined' && menuOpen && isAdmin && !adminPlayerMenuTarget) buildAdminPlayers();
+  /* v21 PERF: a presence push used to rebuild the Online pane, the
+     Worlds tab AND the admin player list (icons + all) even with the
+     menu CLOSED — background jank every join/leave. Now: repaint at
+     most ~1×/s, and only while the menu is open; a closed menu just
+     flags itself dirty and openMenu() paints the fresh state in. */
+  markMenusDirty(true);
+}
+let _menuPaintTO = null;
+function markMenusDirty(fromPresence) {
+  if (!menuOpen) { GLOBAL.dirty = true; return; }   // painted on next open
+  if (_menuPaintTO) return;
+  _menuPaintTO = setTimeout(() => {
+    _menuPaintTO = null;
+    if (!menuOpen) { GLOBAL.dirty = true; return; }
+    MP.paintOnline();
+    renderWorldsTab();
+  }, 750);
 }
 function worldNameOf(id) {
   if (id === Worlds.id) return Worlds.name();
@@ -3599,7 +3646,12 @@ const WL_PATCHABLE = {
   killbrick: ['damage'],
   teleport: ['to', 'cooldown'],
   pad: ['power', 'dur', 'amount'],
-  spawner: ['every', 'max', 'reward', 'night']
+  spawner: ['every', 'max', 'reward', 'night'],
+  car: ['speed'],
+  mover: ['speed'],
+  lamp: ['intensity'],
+  spinner: ['speed'],     // v21.1: live-retuned in the tick (reads rec.def)
+  blink: ['period', 'on']
 };
 function wlIsHex(s) { return typeof s === 'string' && /^#[0-9a-fA-F]{6}$/.test(s); }
 function wlHex(s, fb) { try { return parseInt(String(s).slice(1), 16); } catch (e) { return fb; } }
@@ -3885,13 +3937,22 @@ const GameLogic = {
          per room, exactly as before. */
       this.worldRules = (v.rules && typeof v.rules === 'object' && !Array.isArray(v.rules)) ? v.rules : null;
       if (this.worldRules) {
-        for (const k of RULE_KEYS) {
-          if (this.worldRules[k] == null) continue;
-          let rv = this.worldRules[k];
-          if (typeof rv !== 'boolean') { rv = +rv; if (!isFinite(rv)) continue; }
-          setVal(k, rv);
-        }
-        syncConsts();
+        /* v20.1: DEFERRED — setVal/syncConsts touch module consts that
+           are declared LATER in the file than this call site (FALL_SAFE_H,
+           isAdmin, health…). Applying rules synchronously here died in the
+           temporal dead zone → the module aborted → the loading screen
+           never lifted ("stuck on loading world"). One tick later every
+           declaration exists and the whole RULE_KEYS set applies safely. */
+        const wr = this.worldRules;
+        setTimeout(() => {
+          for (const k of RULE_KEYS) {
+            if (wr[k] == null) continue;
+            let rv = wr[k];
+            if (typeof rv !== 'boolean') { rv = +rv; if (!isFinite(rv)) continue; }
+            setVal(k, rv);
+          }
+          syncConsts();
+        }, 0);
       }
     } else this.worldRules = null;
 
@@ -5082,6 +5143,60 @@ const GameLogic = {
 };
 
 /* ---------- the entity builders ---------- */
+/* ---- v21 LAMP POOL -------------------------------------------------
+   A street of lamp posts wants 20+ point lights, but every light in
+   the scene rides in EVERY material's shader — 22 lights would melt
+   a phone. So the pool holds a SMALL fixed set of THREE.PointLights
+   (created once, always in the scene → constant shader cost) and
+   re-aims them at the posts nearest the player a few times a second.
+   Intensity rides the day/night cycle: lamps glow at dusk and blaze
+   at midnight, then fade out at dawn. -------------------------------- */
+const LAMP = {
+  list: [],          // every lamp entity in the world
+  lights: null,      // the pooled PointLights (lazy)
+  N: 8,              // pool size — 8 is plenty for a street corner
+  _t: 0,             // re-aim throttle
+  ensure() {
+    if (this.lights) return;
+    this.lights = [];
+    for (let i = 0; i < this.N; i++) {
+      const l = new THREE.PointLight(0xffe9b0, 0, 34, 1.6);
+      l.castShadow = false;                     // pools of shadows = no
+      l.visible = false;
+      scene.add(l);
+      this.lights.push(l);
+    }
+  },
+  tick(dt, daylight) {
+    if (!this.list.length) { if (this.lights) for (const l of this.lights) l.visible = false; return; }
+    this.ensure();
+    /* night amount — lamps come on through dusk, off through dawn */
+    const night = clamp(1 - daylight * 1.35, 0, 1);
+    if (night <= 0.02) { for (const l of this.lights) l.visible = false; return; }
+    this._t -= dt;
+    if (this._t <= 0) {                        // re-aim at the nearest posts
+      this._t = 0.5;
+      const cx = player.x, cz = player.z;
+      const near = this.list
+        .map(l => ({ l, d: (l.x - cx) * (l.x - cx) + (l.z - cz) * (l.z - cz) }))
+        .sort((a, b) => a.d - b.d)
+        .slice(0, this.N);
+      for (let i = 0; i < this.N; i++) {
+        const L = this.lights[i];
+        if (i < near.length) {
+          const p = near[i].l;
+          L.position.set(p.x, p.y + 1.2, p.z);   // just under the lamp head
+          L.color.setHex(p.color);
+          L.distance = p.range;
+          L.userData.base = p.intensity;
+          L.visible = true;
+        } else { L.visible = false; L.userData.base = 0; }
+      }
+    }
+    for (const l of this.lights) l.intensity = (l.userData.base || 0) * night;
+  }
+};
+
 const WL_BUILDERS = {
 
   /* BUY BUTTON — v15: step on the pad to buy (no E). A small label
@@ -5620,6 +5735,13 @@ const WL_BUILDERS = {
   killbrick(rec, e, x, y, z) {
     rec.kind = 'killbrick';
     const S = Array.isArray(e.size) ? e.size : [6, 1, 6];
+    /* v21 fix: set the touch AABB here (covers size-less kill bricks)
+       and poke it 0.5 ABOVE the collider — landing on the brick used
+       to resolve the feet exactly to the top and the overlap check
+       missed by zero, so fallers SURVIVED. */
+    rec.aabb.min.x = x - S[0] / 2; rec.aabb.max.x = x + S[0] / 2;
+    rec.aabb.min.y = y;             rec.aabb.max.y = y + S[1] + 0.5;
+    rec.aabb.min.z = z - S[2] / 2; rec.aabb.max.z = z + S[2] / 2;
     const m = new THREE.Mesh(geo(...S),
       new THREE.MeshStandardMaterial({ color: 0xd1332a, roughness: 0.4, transparent: true, opacity: e.damage != null && e.damage < 100 ? 0.55 : 0.75, emissive: 0x5a0f0a, emissiveIntensity: 0.5 }));
     m.position.set(x, y + S[1] / 2, z);
@@ -5632,6 +5754,12 @@ const WL_BUILDERS = {
   /* TELEPORTER — one-way pad */
   teleport(rec, e, x, y, z) {
     rec.kind = 'teleport';
+    /* v21 fix: a size-less entity's AABB defaults to a zero box at the
+       origin — the pad could never be touched. Every touch entity
+       must give itself a real AABB (the button builder always did). */
+    rec.aabb.min.x = x - 2.6; rec.aabb.max.x = x + 2.6;
+    rec.aabb.min.y = y;       rec.aabb.max.y = y + 3;
+    rec.aabb.min.z = z - 2.6; rec.aabb.max.z = z + 2.6;
     const disc = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 2.9, 0.3, 22),
       new THREE.MeshStandardMaterial({ color: 0x142033, emissive: 0x4aa3e0, emissiveIntensity: 1.2, roughness: 0.4 }));
     disc.position.set(x, y + 0.15, z);
@@ -5646,6 +5774,11 @@ const WL_BUILDERS = {
   /* CHECKPOINT — respawn here after touching */
   checkpoint(rec, e, x, y, z) {
     rec.kind = 'checkpoint';
+    /* v21 fix: real touch box (see teleport) — checkpoints were
+       untouchable before any world actually shipped one */
+    rec.aabb.min.x = x - 2.5; rec.aabb.max.x = x + 2.5;
+    rec.aabb.min.y = y;       rec.aabb.max.y = y + 4;
+    rec.aabb.min.z = z - 2.5; rec.aabb.max.z = z + 2.5;
     const disc = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 2.6, 0.3, 22),
       new THREE.MeshStandardMaterial({ color: 0x1a2b18, emissive: 0x58e07a, emissiveIntensity: 1.1, roughness: 0.5 }));
     disc.position.set(x, y + 0.15, z);
@@ -5664,6 +5797,10 @@ const WL_BUILDERS = {
   /* BUFF PAD — speed / jump / heal / launch while standing on it */
   pad(rec, e, x, y, z) {
     rec.kind = 'pad';
+    /* v21 fix: real touch box (see teleport) */
+    rec.aabb.min.x = x - 2.4; rec.aabb.max.x = x + 2.4;
+    rec.aabb.min.y = y;       rec.aabb.max.y = y + 3;
+    rec.aabb.min.z = z - 2.4; rec.aabb.max.z = z + 2.4;
     const COLORS = { speed: 0xf5c542, jump: 0xe86bd0, heal: 0x58e07a, launch: 0x4aa3e0 };
     const col = COLORS[e.effect] || 0x8a9096;
     const disc = new THREE.Mesh(new THREE.CylinderGeometry(2.3, 2.5, 0.26, 20),
@@ -6339,11 +6476,17 @@ const WL_BUILDERS = {
     part(0.22, 0.9, 0.22, mat(driverC, 0.8), 1.05, 2.1, 0.15, grp);          // steering arm
     part(0.22, 0.9, 0.22, mat(driverC, 0.8), 0.15, 2.1, 0.15, grp);
     rec.hitCd = 0;
-    /* pure wall-clock phase: every screen agrees where every car is,
-       forever — no network sync, no drift */
+    /* v21: PHASE IS INCREMENTAL now — the old wall-clock formula baked
+       the speed in, so the admin carSpeed rule couldn't change traffic
+       without teleporting every car across the map. Integrating each
+       tick lets the Cars sliders retune live; screens drift a hair
+       apart over minutes (cars are local NPC traffic — nobody can
+       tell) and every hit/yeet is decided on YOUR screen anyway. */
     const ph0 = wlNum(e.phase, 0, 1e6, 0);
+    rec.ph = ph0 + (Date.now() / 1000) * spd;
     rec.tick = dt => {
-      const ph = ph0 + (Date.now() / 1000) * spd;
+      rec.ph += dt * spd * clamp(+V.carSpeed || 1, 0.25, 2.5);
+      const ph = rec.ph;
       const p = routePos(ph);
       const a = routePos(ph - 2.2), b = routePos(ph + 2.2);   // look behind/ahead for a smooth heading
       grp.position.set(p.x, y, p.z);
@@ -6356,17 +6499,235 @@ const WL_BUILDERS = {
         rec.hitCd = 1.4;                                      // one hit per pass
         const hl = Math.hypot(b.x - a.x, b.z - a.z) || 1;
         const vx = (b.x - a.x) / hl, vz = (b.z - a.z) / hl;   // the car's travel direction
-        player.vx += vx * (spd * 1.7 + 16);                  // thrown down the road
-        player.vz += vz * (spd * 1.7 + 16);
-        player.vy = Math.max(player.vy, 46);                  // and UP
+        const yeet = clamp(+V.carYeet || 45, 5, 150);          // v21: room-rule yeet power
+        player.vx += vx * (12 + yeet * (spd / 15));           // thrown down the road
+        player.vz += vz * (12 + yeet * (spd / 15));
+        player.vy = Math.max(player.vy, 20 + yeet * 0.9);       // and UP
         climbing = false;
-        startYeet(90 + spd);                                  // full Roblox fling, spinning
-        hurtPlayer(dmg);
+        startYeet(90 + yeet);                                  // full Roblox fling, spinning
+        hurtPlayer(clamp(+V.carDamage || dmg, 1, 200));       // v21: room-rule damage
         wlToast('You got HIT by a car!', true);
       }
     };
     rec.setGate = ok => { grp.visible = ok; };
     rec.dispose = () => { scene.remove(grp); };
+  },
+
+  /* MOVING PLATFORM — v21 obby classic. Glides from its spawn to
+     spawn+`to` and back, pausing at each end, on wall-clock phase so
+     every screen agrees where it is without any network sync. The
+     collider is registered over the whole SWEPT range (grid cells are
+     static), then its box is re-positioned each tick; anyone standing
+     on the platform rides its per-tick delta. */
+  mover(rec, e, x, y, z) {
+    rec.kind = 'mover';
+    const S = Array.isArray(e.size) ? e.size : [6, 1, 6];
+    const to = Array.isArray(e.to) ? e.to : [0, 0, 16];
+    const spd = wlNum(e.speed, 0.2, 40, 6);          // studs / second
+    const pause = wlNum(e.pause, 0, 8, 0.6);         // beat at each end
+    const ph0 = wlNum(e.phase, 0, 1e6, 0);           // stagger multiple movers
+    const col = wlIsHex(e.color) ? wlHex(e.color) : 0x4aa3e0;
+    const tx = x + clamp(+to[0] || 0, -220, 220),
+          ty = y + clamp(+to[1] || 0, -220, 220),
+          tz = z + clamp(+to[2] || 0, -220, 220);
+    const travel = Math.hypot(tx - x, ty - y, tz - z) || 0.001;
+    const cycle = (travel / spd) * 2 + pause * 2;
+    /* the platform mesh — chunky plastic with a chevron top so the
+      direction of travel reads at a glance */
+    const grp = new THREE.Group();
+    grp.position.set(x, y + S[1] / 2, z);
+    scene.add(grp);
+    rec.grp = grp;                                   // exposed for tests/patching
+    const bodyM = mat(col, 0.6), trimM = mat(0x2b3138, 0.7);
+    part(S[0], S[1], S[2], bodyM, 0, 0, 0, grp);
+    part(S[0] + 0.3, 0.22, S[2] + 0.3, trimM, 0, -S[1] / 2 + 0.08, 0, grp);   // under-trim
+    const dir = Math.atan2(tx - x, tz - z);
+    const chevM = mat(0xf2c94c, 0.5);
+    for (const off of [-0.22, 0, 0.22])
+      part(Math.max(0.8, S[0] * 0.3), 0.06, Math.max(0.8, S[2] * 0.24), chevM, off * S[0] * 1.2, S[1] / 2 + 0.04, 0, grp).rotation.y = dir;
+    /* collider REGISTERED over the swept range, positioned per tick */
+    const lox = Math.min(x, tx), hix = Math.max(x, tx);
+    const loz = Math.min(z, tz), hiz = Math.max(z, tz);
+    const colRef = World.addBox(
+      (lox + hix) / 2, y + S[1] / 2, (loz + hiz) / 2,
+      (hix - lox) + S[0] + 2, S[1] + 1, (hiz - loz) + S[2] + 2);
+    const shape = t => t * t * (3 - 2 * t);          // smoothstep easing
+    let last = null;
+    rec.tick = dt => {
+      let ph = (Date.now() / 1000 + ph0) % cycle;
+      let t;
+      if (ph < travel / spd) t = shape(ph / (travel / spd));
+      else if (ph < travel / spd + pause) t = 1;
+      else if (ph < travel / spd * 2 + pause) t = 1 - shape((ph - travel / spd - pause) / (travel / spd));
+      else t = 0;
+      const px = x + (tx - x) * t, py = y + (ty - y) * t, pz = z + (tz - z) * t;
+      /* stand-on check BEFORE the move so the rider carries the delta */
+      const top = py + S[1];
+      const onTop = player.x > px - S[0] / 2 - 0.4 && player.x < px + S[0] / 2 + 0.4 &&
+                    player.z > pz - S[2] / 2 - 0.4 && player.z < pz + S[2] / 2 + 0.4 &&
+                    player.y >= py - 0.1 && player.y < py + S[1] + 1.4 && player.vy <= 0.01;
+      const ddx = px - (last ? last.px : px), ddy = py - (last ? last.py : py), ddz = pz - (last ? last.pz : pz);
+      grp.position.set(px, py + S[1] / 2, pz);
+      colRef.min.x = px - S[0] / 2; colRef.max.x = px + S[0] / 2;
+      colRef.min.y = py;          colRef.max.y = py + S[1];
+      colRef.min.z = pz - S[2] / 2; colRef.max.z = pz + S[2] / 2;
+      if (onTop) { player.x += ddx; player.y += ddy; player.z += ddz; }
+      last = { px, py, pz };
+    };
+    rec.setGate = ok => { grp.visible = ok; colRef.enabled = ok; };
+    rec.dispose = () => { scene.remove(grp); colRef.enabled = false; };
+  },
+
+  /* STREET LAMP — v21: a light SOURCE, not a mesh (the posts + heads
+     are ordinary build parts). Registers into the LAMP list; the
+     LAMP POOL keeps a small fixed set of PointLights in the scene
+     (constant shader cost) and re-aims them at the nearest posts a
+     few times a second, so a street of 22 lamps costs 8 lights. */
+  lamp(rec, e, x, y, z) {
+    rec.kind = 'lamp';
+    const lamp = {
+      x, y, z,
+      color: wlIsHex(e.color) ? wlHex(e.color) : 0xffe9b0,
+      intensity: wlNum(e.intensity, 0.1, 4, 2.2),
+      range: wlNum(e.range, 8, 80, 34)
+    };
+    LAMP.list.push(lamp);
+    rec.dispose = () => {
+      const i = LAMP.list.indexOf(lamp);
+      if (i >= 0) LAMP.list.splice(i, 1);
+    };
+  },
+
+  /* SPINNER — v21.1 obby kit. The classic windmill: one bar (or a
+     cross of up to 4) sweeping around a hub pole, phased off the wall
+     clock so every screen agrees where it is with zero network sync.
+     `kill` (default true) makes the bar a red lava bar — touch it and
+     it hurts like a killbrick; `kill:false` makes a solid bar that
+     BONKS you flying (the fun rideable rotor). The hub pole itself is
+     a real collider — hug it to duck a sweep, or jump the bar. Reads
+     its live speed from rec.def each tick, so admin patches retune a
+     spinning bar in place. */
+  spinner(rec, e, x, y, z) {
+    rec.kind = 'spinner';
+    const S = Array.isArray(e.size) ? e.size : [14, 1.1, 1.2];   // [bar length, bar height, bar thickness]
+    const arms = Math.max(1, Math.min(4, Math.round(wlNum(e.arms, 1, 4, 2))));
+    const hgt = wlNum(e.height, 0, 20, 2.2);                     // bar centre above the pad
+    const ph0 = wlNum(e.phase, 0, 1e6, 0);
+    const kill = e.kill !== false;
+    const col = wlIsHex(e.color) ? wlHex(e.color) : (kill ? 0xd1332a : 0x3a424c);
+    const grp = new THREE.Group();
+    grp.position.set(x, y, z);
+    scene.add(grp);
+    rec.grp = grp;
+    const poleH = hgt + 2.6;
+    part(0.9, poleH, 0.9, mat(0x2b3138, 0.7), 0, poleH / 2, 0, grp);   // hub pole
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.8, 1.1, 14), mat(0x3a424c, 0.45, 0.3));
+    cap.position.y = hgt; cap.castShadow = true; grp.add(cap);
+    const barM = kill
+      ? new THREE.MeshStandardMaterial({ color: col, roughness: 0.4, emissive: 0x5a0f0a, emissiveIntensity: 0.6 })
+      : new THREE.MeshStandardMaterial({ color: col, roughness: 0.5, envMapIntensity: 0.35 });
+    rec.bars = [];
+    for (let i = 0; i < arms; i++) {
+      const bar = new THREE.Mesh(geo(S[0], S[1], S[2]), barM);
+      bar.position.y = hgt;
+      bar.castShadow = bar.receiveShadow = true;
+      grp.add(bar);
+      rec.bars.push(bar);
+    }
+    World.addBox(x, y + poleH / 2, z, 0.9, poleH, 0.9);          // the pole is huggable
+    const L2 = S[0] / 2, th = S[2] / 2, bh = S[1] / 2 + 0.4;
+    const armStep = Math.PI * 2 / arms;
+    rec.tick = dt => {
+      const spd = wlNum(rec.def.speed, -360, 360, 60);          // live: admin patches retune it
+      const rad = (((Date.now() / 1000 + ph0) * spd) % 360) * Math.PI / 180;
+      for (let i = 0; i < arms; i++) rec.bars[i].rotation.y = rad + i * armStep;
+      rec.killCd -= dt;
+      if (rec.gate === false) return;                           // gated off — visual only
+      /* does any arm cross the local player this frame? */
+      const py0 = player.y, py1 = player.y + 4.6;
+      if (py1 < y + hgt - bh || py0 > y + hgt + bh) return;
+      for (let i = 0; i < arms; i++) {
+        const c = Math.cos(rad + i * armStep), s = Math.sin(rad + i * armStep);
+        const rx = player.x - x, rz = player.z - z;
+        const along = rx * c - rz * s;                           // where on the bar line
+        const perp = rx * s + rz * c;                            // how far off it
+        if (Math.abs(along) < L2 + 0.4 && Math.abs(perp) < th + player.hw) {
+          if (kill) {
+            if (rec.killCd <= 0) { rec.killCd = 0.8; hurtPlayer(rec.def.damage || 1000); }
+          } else if (rec.killCd <= 0) {
+            rec.killCd = 1;
+            /* shoved the way the bar is moving at your spot + a
+               little radial out + a hop — pure carnival */
+            const rl = Math.hypot(rx, rz) || 1;
+            const K = 24 + Math.abs(spd) * 0.1, sgn = spd >= 0 ? 1 : -1;
+            player.vx += (rz / rl) * K * sgn + (rx / rl) * K * 0.3;
+            player.vz += (-rx / rl) * K * sgn + (rz / rl) * K * 0.3;
+            player.vy = Math.max(player.vy, 18);
+            wlToast('WHEE! The rotor flung you!');
+          }
+          break;
+        }
+      }
+    };
+    rec.setGate = ok => { grp.visible = ok; };
+    rec.dispose = () => { scene.remove(grp); };
+  },
+
+  /* BLINK — v21.1 obby kit. The disappearing platform: solid for the
+     `on` share of every `period`, then ghosts away and anyone left
+     standing drops. Wall-clock phase (stagger a staircase with small
+     `phase` offsets — every screen agrees, no sync). Re-appearing
+     under a player pops them on top instead of trapping them inside
+     the box, and the last moments before a vanish pulse the emissive
+     as a warning. Period/on read live from rec.def (admin patches
+     retune the rhythm in place). */
+  blink(rec, e, x, y, z) {
+    rec.kind = 'blink';
+    const S = Array.isArray(e.size) ? e.size : [5, 1, 5];
+    const ph0 = wlNum(e.phase, 0, 1e6, 0);
+    const col = wlIsHex(e.color) ? wlHex(e.color) : 0x9a6be8;
+    const m = new THREE.Mesh(geo(...S), new THREE.MeshStandardMaterial({
+      color: col, roughness: 0.5, transparent: true, opacity: 1,
+      emissive: col, emissiveIntensity: 0
+    }));
+    m.position.set(x, y + S[1] / 2, z);
+    m.castShadow = m.receiveShadow = true;
+    scene.add(m);
+    rec.mesh = m; rec.mat = m.material;
+    const colRef = World.addBox(x, y + S[1] / 2, z, ...S);
+    const phaseT = () => ((Date.now() / 1000 + ph0) % wlNum(rec.def.period, 1, 30, 4)) / wlNum(rec.def.period, 1, 30, 4);
+    let solid = phaseT() < wlNum(rec.def.on, 0.15, 0.85, 0.55);   // start in the TRUE phase
+    let op = solid ? 1 : 0.1;
+    colRef.enabled = solid;
+    rec.mat.opacity = op;
+    rec.tick = dt => {
+      const t = phaseT();
+      const onF = wlNum(rec.def.on, 0.15, 0.85, 0.55);
+      const want = t < onF;
+      if (want !== solid) {
+        solid = want;
+        if (rec.gate !== false) colRef.enabled = solid;
+        if (solid) {
+          /* re-appearing under someone: pop them on top, never trap */
+          const pb = playerAABB();
+          if (pb.min.x < x + S[0] / 2 && pb.max.x > x - S[0] / 2 &&
+              pb.min.z < z + S[2] / 2 && pb.max.z > z - S[2] / 2 &&
+              pb.min.y < y + S[1] && pb.max.y > y) {
+            player.y = y + S[1] + 0.05;
+            player.vy = Math.max(0, player.vy);
+          }
+        }
+      }
+      /* ease the opacity so vanish / reappear read at a glance */
+      const target = solid ? 1 : 0.1;
+      op += (target - op) * Math.min(1, dt * 9);
+      rec.mat.opacity = op;
+      /* about to vanish? pulse a warning glow */
+      const left = (onF - t) * wlNum(rec.def.period, 1, 30, 4);
+      rec.mat.emissiveIntensity = (solid && left < 0.8) ? 0.3 + 0.3 * Math.sin(elapsed * 14) : 0;
+    };
+    rec.setGate = ok => { m.visible = ok; colRef.enabled = ok && solid; };
+    rec.dispose = () => { scene.remove(m); colRef.enabled = false; };
   },
 
 };
@@ -6745,7 +7106,12 @@ if (Worlds.recipe) {
 } else buildTemplateWorld();
 /* v14: the world's own GAME — items, buildings, buttons, droppers,
    shops, scripts (§9.7). No-op on worlds without logic fields. */
-GameLogic.load(Worlds.recipe);
+try { GameLogic.load(Worlds.recipe); }
+catch (e) {
+  /* v20.1: a logic-entity crash must NEVER hang the loading screen —
+     the static world is still playable, so log + lift the overlay. */
+  console.error('[worlds] game logic load failed:', e);
+}
 { const wl = document.getElementById('world-loading'); if (wl) wl.remove(); }
 
 function buildTemplateWorld() {
@@ -8992,6 +9358,15 @@ function loop() {
 
   MP.projectTags();   // remote nametags (camera is updated now — no lag)
 
+  /* v21 PERF: while the menu overlay is open, the world behind it is
+     a BLURRED BACKDROP — rendering it at full fps just to blur it is
+     what made the menu feel laggy on phones (backdrop-filter forces
+     the GPU to re-blur every frame the canvas changes). ~5fps behind
+     the blur is indistinguishable, and the GPU gets to idle. Logic
+     above (physics, MP, GameLogic.tick) still runs every frame. */
+  if (menuOpen && (elapsed - _menuRenderT) < 0.2) return;
+  _menuRenderT = elapsed;
+
   renderer.render(scene, camera); // also outside the try
 
   /* v11 FIRST-PERSON VIEWMODEL PASS — the held tool renders from its
@@ -9034,6 +9409,7 @@ setTimeout(() => { hint.style.opacity = '0'; }, 12000);
 ================================================================ */
 const menuOverlay = document.getElementById('menu-overlay');
 let menuOpen = false, adminBuilt = false, adminLiveTO = null;
+let _menuRenderT = 0;   // v21: last world render while the menu is open (5fps cap)
 
 function openMenu(open) {
   menuOpen = open;
@@ -9064,6 +9440,16 @@ document.getElementById('menu-close').addEventListener('click', () => openMenu(f
 menuOverlay.addEventListener('pointerdown', e => { if (e.target === menuOverlay) openMenu(false); });
 document.getElementById('mp-rejoin').addEventListener('click', () => {
   MP.kicked = false; MP.retry = 0; MP.state = 'off'; MP.connect();
+});
+/* v21: RESET CHARACTER — the classic Roblox button, for everyone (not
+   just admins). Respawns you at the world spawn — or at your last
+   CHECKPOINT in obby-style worlds — cancels any yeet flight, and
+   restores full health. */
+document.getElementById('mp-reset').addEventListener('click', () => {
+  openMenu(false);
+  respawn();
+  spawnFlash(player.x, player.y + 2.2, player.z, 1.5);
+  wlToast('Character reset');
 });
 
 document.querySelectorAll('#menu-rail .mtab[data-tab]').forEach(btn => {
@@ -9212,9 +9598,19 @@ function bindSlider(key, label, range, fmt) {
     if (!drag) return;
     const dx = e.clientX - drag.x;
     if (!drag.on) { if (Math.abs(dx) < 6) return; drag.on = true; }   // tiny jitters change nothing
-    apply(drag.v + dx / (track.clientWidth || 1) * (max - min));
+    const v = drag.v + dx / (track.clientWidth || 1) * (max - min);
+    /* v21 PERF: coalesce drag applies to one per animation frame —
+       graphics sliders (shadow size, fog, resolution) recompile
+       materials, and doing that for every pointermove event made the
+       whole menu stutter while sliding */
+    drag.pendV = v;
+    if (drag.raf) return;
+    drag.raf = requestAnimationFrame(() => { drag.raf = 0; apply(drag.pendV); });
   });
-  const dragEnd = () => { drag = null; };
+  const dragEnd = () => {
+    if (drag && drag.raf) cancelAnimationFrame(drag.raf);
+    drag = null;
+  };
   track.addEventListener('pointerup', dragEnd);
   track.addEventListener('pointercancel', dragEnd);
 
@@ -10098,6 +10494,10 @@ function buildAdminTab() {
   wp.append(bindSlider('swordPvpDamage', 'Sword Damage (vs players)', [5, 60, 1]));
   wp.append(bindSlider('gunDamage', 'Blaster Damage', [5, 60, 1]));
   wp.append(bindSlider('knockback', 'Sword Knockback Force', [0, 60, 1]));
+  sect(wp, 'NPC Cars (worlds with traffic)');   // v21
+  wp.append(bindSlider('carSpeed', 'Car Speed', [0.25, 2.5, 0.05], v => (+v).toFixed(2) + '× traffic'));
+  wp.append(bindSlider('carYeet', 'Car Yeet Power', [5, 150, 5]));
+  wp.append(bindSlider('carDamage', 'Car Hit Damage', [1, 200, 1]));
   sect(wp, 'Camera Zoom (everyone)');
   wp.append(bindSlider('zoomMin', 'Zoom Minimum', [1, 12, 0.5]));
   wp.append(bindSlider('zoomMax', 'Zoom Out Limit', [10, 60, 1]));
@@ -10234,6 +10634,7 @@ function updateDayNight(dt) {
   fpSun.color.copy(_cC);
   fpSun.intensity = Math.max(0.3, sun.intensity * 0.85);
   fpHemi.intensity = hemi.intensity;
+  LAMP.tick(dt, dl);   // v21: street lamps fade in with the night
 }
 
 /* ---- PERF: freeze the local matrices of every static mesh ----
