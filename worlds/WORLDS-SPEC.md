@@ -741,3 +741,118 @@ room, bedroom, kitchen), a corner store with a glass door, a basketball
 court and a big park (fountain, pond, slide, two working swing sets).
 Admin commands: `/help /tp house 1-20|park|store|court|pond|swings|spawn
 /time /doors open|close|auto /party /heal /announce`.
+
+### 7.27 `mover` — the moving platform (v21)
+```json
+{ "id": "mover1", "type": "mover", "pos": [-5, 14, 80],
+  "to": [10, 0, 0], "speed": 7, "pause": 0.5,
+  "size": [5, 1, 5], "color": "#4aa3e0", "phase": 0 }
+```
+Glides from `pos` to `pos+to` and back (smoothstep easing, `pause`
+seconds at each end), on wall-clock phase — every screen agrees where
+it is with zero network traffic. Anyone standing on it rides along.
+`phase` (seconds) staggers multiple movers on the same span. The obby
+classic: crossing lava, timing gaps, climbing shafts.
+
+### 7.28 `lamp` — the street lamp (v21)
+```json
+{ "id": "lamp-s3", "type": "lamp", "pos": [-90, 24.7, -44],
+  "color": "#ffe9b0", "intensity": 2.2, "range": 34 }
+```
+A LIGHT SOURCE, not a mesh — pair it with ordinary `build[]` posts
+and neon heads. The client keeps a fixed pool of 8 point lights and
+re-aims them at the posts nearest the player, so a whole street costs
+8 lights. Intensity rides the day/night cycle: lamps come on at dusk,
+blaze at midnight, fade at dawn.
+
+### 7.29 NPC traffic rules (v21)
+`carSpeed` (0.25–2.5, ×traffic), `carYeet` (5–150) and `carDamage`
+(1–200) are ROOM RULES now — per-world presets in `vars.rules`, live
+admin sliders in the Rules tab. A car clip yeets with `carYeet` power
+(spinning Roblox fling) and deals `carDamage`.
+
+### 7.30 The worlds (v21)
+* **baseplate** — the built-in template fallback.
+* **island-world** — a terrain place to build on.
+* **gold-rush-tycoon** — plots, droppers, raids. v21: every weapon is
+  its OWN case — claim a plot and all 8 weapon pads (sword → storm
+  pet) are visible with the weapon spinning inside; buy them one by
+  one, re-equip free forever (`reclaim`).
+* **neighborhood-world** — the suburb. v21: 22 street lamps that
+  light up at night, NPC traffic yeets on contact (tunable rules).
+* **obby-world** — Rainbow Rush: see §7.33.
+
+### 7.31 `spinner` — the rotating hazard bar (v21.1 obby kit)
+```json
+{ "id": "spin-1", "type": "spinner", "pos": [0, 10, 100],
+  "size": [14, 1.1, 1.2], "speed": 70, "arms": 2,
+  "height": 2.2, "kill": true, "phase": 0, "color": "#d1332a" }
+```
+The classic obby windmill. `size` is the BAR — `[length, height,
+thickness]`. It sweeps around a hub pole on wall-clock phase (zero
+network sync; `phase` in seconds staggers rotors). Fields:
+* `speed` (−360..360, degrees/second; negative spins the other way)
+* `arms` (1–4 bars radiating from the hub, default 2)
+* `height` (0–20, bar centre above the entity pos — default 2.2 is
+  just jumpable with `jumpPower` 48)
+* `kill` (default `true`): a red lava bar that hurts like a
+  killbrick (`damage` optional, default 1000); `kill:false` = a solid
+  gray rotor that BONKS players flying — the fun rideable kind
+* `color` (hex, default red for kill / gray for bonk)
+The hub pole is a real collider — hug it to duck, or jump the bar.
+Admin-patchable: `speed` (live).
+
+### 7.32 `blink` — the disappearing platform (v21.1 obby kit)
+```json
+{ "id": "blink-1", "type": "blink", "pos": [3, 9, 272],
+  "size": [5, 1, 5], "period": 4.2, "on": 0.58,
+  "phase": 1.15, "color": "#4aa3e0" }
+```
+Solid for the `on` share of every `period` seconds, then ghosts
+away — anyone standing on it drops. `phase` (seconds) staggers a
+staircase of blinks so every screen agrees on the rhythm (wall
+clock, no sync). Re-appearing under a player pops them ON TOP
+instead of trapping them; the last moments before a vanish pulse a
+warning glow. Admin-patchable: `period`, `on` (both live).
+
+### 7.33 obby-world — Rainbow Rush (v21.1)
+A BIG colorful classic obby, 100% data-driven from its JSON (449
+build parts + 83 entities, ~52 KB): 10 themed stages — rainbow
+steps, beam walk with spinners, lava hopscotch, a spinner gauntlet,
+a phased blink bridge, mover rides over lava (incl. a vertical
+lift), a conveyor speed-run with bonk rotors, launch-pad chains, a
+tower spiral with blink steps, a two-rotor finale dance floor and a
+party island with the golden crown + a telepad home. 10
+checkpoints — fall off (kill floor at y −30 under everything) and
+you respawn at the last one. Regenerate it with
+`scripts/gen_oby.py` or author a whole new one per §8.
+
+### 8. Building a world JSON with AI (v21.1)
+The client is a GENERIC ENGINE: it knows nothing about any map.
+A world JSON that passes `validateRecipe` + `validateGameLogic`
+renders and plays, full stop. To have an AI build you a new map:
+1. Feed it this spec (the whole `worlds/WORLDS-SPEC.md`).
+2. Ask for a single JSON file `{id,name,desc,spawn,sky,terrain,
+   scatter,build,logic,vars}` — the vocabulary is: `build[]` static
+   parts (§5: `pos/size/color/material/shape/rot/lift/repeat/
+   noCollide/id/requires`) and the 23 `logic[]` entity types
+   (§7.1–§7.32: button claim dropper conveyor collector killbrick
+   teleport checkpoint pad npc spawner pickup door sign claimer
+   zwave swing laser upgrader car mover lamp spinner blink).
+3. Drop the file in `worlds/` and add one entry to `worlds/index.js`
+   (the `/api/worlds` manifest the worker serves). No client
+   changes, ever — that is the point.
+
+Hard limits the validator enforces: 2500 build parts, 320 logic
+entities, 24 items, ids `^[a-z0-9][a-z0-9-]{1,31}$` unique across
+build+logic, `pos` ±1000 (y −200..500), part sizes ≤ 420, entity
+sizes 0.5..120. Physics envelope to design against: default GRAV 165,
+`walkSpeed` 12 / `runSpeed` 20 / `jumpPower` 48 ⇒ jump height ~7
+studs, run-jump reach ~11 — keep edge gaps ≤ 9 and rises ≤ +2 per
+hop (or gate them behind pads/movers). Spawn fall-safety: put a
+kill floor (tiled big killbricks, y ≈ −30) under everything so
+falls respawn at the last `checkpoint`. Tuning tips: stagger
+`phase` values on movers/blinks/spinners sharing a view; use
+`repeat:[n,dx,dz]` rows for tiled tops (one entry per row);
+`vars.rules` presets per-world (`fallDamage`, `jumpPower`,
+`maxZombies`, car/lamp rules — §7.26/§7.29).
