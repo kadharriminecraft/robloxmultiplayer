@@ -484,6 +484,57 @@ A claim whose owner is no longer in the room (a stale save, a crashed
 tab) is released automatically ~7 s after you connect, so plots are
 never stuck "owned" by ghosts.
 
+### 7.20 Water you can swim in (v19)
+Any build part with `"material": "water"` is real water: translucent,
+rippling (one shared texture, so ten pools cost the same as one), no
+collider. Chest-deep = **swimming** (Roblox-style): you float head-up,
+SPACE swims up, look down while moving to dive, look up to rise, C sinks,
+jump at the surface to hop out. Water breaks every fall and tints the
+screen blue while your camera is under it. Recipe for a pool:
+
+1. Dig the pit with `terrain.carve` (below).
+2. Line it with tile parts (floor + 4 walls), then drop ONE water box in
+   whose top sits ~0.6 below the ground. Add steps/ladders to climb out.
+
+`terrain.carve: [{ x, z, w, d, depth, block? }]` (≤ 16) lowers the
+terrain inside that rectangle by `depth` blocks (`block`: grass | dirt |
+sand | stone for the pit walls). Collision follows the carved ground.
+
+### 7.21 `laser` — buyable laser doors (v19)
+`{ "type":"laser", "id":"plot-ne-laser", "plot":"plot-ne", "pos":[x,y,z],
+"rot":0, "size":[w,h,0.8], "requires":"ne-b08", "panel":[x,y,z] }`.
+Until the `requires` button is bought the doorway is open to everyone.
+After that the owner toggles it at the `panel` console (press E) or an
+admin runs `/laser`. ON = red beams that block and zap (20 hp + knock
+back) everyone except the owner. `size` must have 3 numbers.
+
+### 7.22 `upgrader` — conveyor multiplier (v19)
+`{ "type":"upgrader", "id":"ne-up1", "plot":"plot-ne", "pos":[x,y,z],
+"rot":0, "size":[t,h,w], "mult":1.5, "color":"#39c7d8", "requires":"ne-b10" }`.
+Place it OVER a conveyor: every drop that rides through is worth `mult`
+times more (once per upgrader; different upgraders stack). Replaces the
+old incomeMult buttons.
+
+### 7.23 Progression, claims and toggles (v19)
+- Progression route: give every plot button an `order` and chain them
+  with `requires: [plot, "ne-b03"]` — a pad only appears once the
+  button before it is bought, and `economy.queue` (default 4; Gold
+  Rush uses 3) caps how many pads show at once, so players only ever
+  see the next steps.
+- Button labels only show while their pad is visible (and within ~70
+  studs), so a fresh map has no floating text.
+- One player can own **one** plot. A second claim is refused.
+- `claim.open: true` — anyone may walk into the plot (the door still
+  only swings for the owner unless laser doors say otherwise).
+- Synced toggles (`state.tg`) back laser doors and manual doors. The
+  relay stores them, so late joiners see the same state.
+
+### 7.24 Manual house doors (v19)
+`vars.doors: "manual"` (or `door.mode: "manual"`) makes every non-plot
+door a press-E / tap-the-prompt door: "Open door" / "Close door". The
+state is a synced toggle, so a door you open is open for everyone.
+Admin door modes (`/doors`, `Game.setDoors`) still override it.
+
 ---
 
 ## 8. How it all syncs (multiplayer model)
@@ -509,7 +560,7 @@ in the room anymore (works even against an old v6 relay).
 
 ---
 
-## 9. `script` — the deep-logic escape hatch (optional, ≤ 8 KB)
+## 9. `script` — the deep-logic escape hatch (optional, ≤ 20000 chars)
 
 When the declarative entities aren't enough, add a sandboxed JS script.
 It runs identically on every client with a small, safe `Game` API:
@@ -562,6 +613,32 @@ aren't in lockstep); shared logic belongs in events.
 
 ---
 
+### 9.1 Admin commands from a world script (v19)
+```js
+Game.command({ id: 'money', cat: 'Money', label: 'Give money',
+  desc: 'Add cash to a player (or everyone).',
+  args: [{ n: 'amount', t: 'num', d: 1000, min: -1e6, max: 1e6 },
+         { n: 'player', t: 'player', o: ['all'] }],
+  quick: [['+$1k', { amount: 1000 }]],
+  run: function (a) { Game.addMoney(a.amount); return 'Done'; } });
+```
+Every command shows as a card in **Menu → Admin → World**, grouped by
+`cat` with a search box, AND works in chat as `/id arg1 arg2`. The
+engine checks admin before `run` is called. Arg types: `num`, `text`,
+`pick` (`o` = options), `player` (returns a player id, `'all'` if listed
+in `o`; chat accepts `me`), `plot` (returns an id like `plot-ne`).
+`run` may return a string, shown as a toast. Up to 60 commands, 4 args.
+Handlers of `Game.onNet` events that do admin things must check
+`Game.isAdmin(from)` themselves.
+
+Extra v19 helpers: `Game.plotIds()`, `Game.plotOwnerName(id)`,
+`Game.toggle(id)`, `Game.setToggle(id, on)`, `Game.setAllDoors(open)`,
+`Game.playerPos(id)`, `Game.playerName(id)`.
+
+The Admin menu has tabs **World** (this world's commands) · Players ·
+Rules · Zombies · Server; engine commands that work everywhere are
+listed under "Everywhere".
+
 ## 10. Hard rules (the client validates every recipe)
 
 Everything is checked on load; ANY failure = the world never appears
@@ -592,7 +669,7 @@ Everything is checked on load; ANY failure = the world never appears
    npc lines ≤ 6 × 140 chars; shops ≤ 8 entries; button `order` 1-9999;
    dropper `dropOff` two × ±8; claimer `steal` 0.05-0.9 / `cool` 5-600;
    zwave `cost` 0-10^9 / `count` 1-8 / `radius` 10-120 / `reward` 0-10^4.
-9. `script` ≤ 8000 chars and lint-clean (§9).
+9. `script` ≤ 20000 chars and lint-clean (§9).
 
 ## 11. Publishing checklist
 

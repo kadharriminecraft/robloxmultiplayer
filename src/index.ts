@@ -1,6 +1,6 @@
 // @ts-nocheck — plain-JS worker (wrangler bundles it with esbuild; no type-check step)
 /* ============================================================
-   BASEPLATE MULTIPLAYER RELAY v8 — verified admins + worlds + game state
+   BASEPLATE MULTIPLAYER RELAY v9 — verified admins + worlds + game state
    ------------------------------------------------------------
    WHY v8?  Security + cost fixes (game v17):
 
@@ -472,6 +472,8 @@ export class MyDurableObject {
        b  { buttonId: 1 }        bn { buttonId: buyCount }
        c  { plotId: {i, n} }     pk { pickupId: 1 }
        k  { plotId: vaultMoney }                    (v7: vaults)
+       tg { entityId: [0|1, timestampMs] }          (v9: toggles —
+          house doors, laser doors; newest timestamp wins)
      'tyc' {t:'r'} from an admin resets everything.
      'tyc' {t:'pr'} clears one plot (owner left).   (v7) */
   async _gameApply(d, from) {
@@ -483,15 +485,21 @@ export class MyDurableObject {
       if (!g.b) g.b = {}; if (!g.bn) g.bn = {}; if (!g.c) g.c = {}; if (!g.pk) g.pk = {}; if (!g.k) g.k = {};
       delete g.c[d.e];
       delete g.k[d.e];
-      if (Array.isArray(d.ids)) for (const id of d.ids) { delete g.b[id]; delete g.bn[id]; delete g.pk[id]; }
+      if (!g.tg) g.tg = {};
+      if (Array.isArray(d.ids)) for (const id of d.ids.slice(0, 120)) { delete g.b[id]; delete g.bn[id]; delete g.pk[id]; delete g.tg[id]; }
       await this.state.storage.put('gstate', g).catch(() => {});
       return;
     }
-    if (d.t !== 'b' && d.t !== 'c' && d.t !== 'pk' && d.t !== 'bank') return;
+    if (d.t !== 'b' && d.t !== 'c' && d.t !== 'pk' && d.t !== 'bank' && d.t !== 'tg') return;
     let g = await this.state.storage.get('gstate').catch(() => null);
     if (!g || typeof g !== 'object') g = { b: {}, bn: {}, c: {}, pk: {} };
     if (!g.b) g.b = {}; if (!g.bn) g.bn = {}; if (!g.c) g.c = {}; if (!g.pk) g.pk = {}; if (!g.k) g.k = {};
-    if (d.t === 'b') { g.b[d.e] = 1; g.bn[d.e] = (g.bn[d.e] || 0) + 1; }
+    if (!g.tg) g.tg = {};
+    if (d.t === 'tg' && typeof d.e === 'string') {                 // v9: toggles, newest wins
+      const id = d.e.slice(0, 64), ts = +d.s || 0, cur = g.tg[id];
+      if (!cur || ts > cur[1]) g.tg[id] = [d.v === 1 ? 1 : 0, ts];
+      if (Object.keys(g.tg).length > 300) g.tg = Object.fromEntries(Object.entries(g.tg).slice(-300));
+    } else if (d.t === 'b') { g.b[d.e] = 1; g.bn[d.e] = (g.bn[d.e] || 0) + 1; }
     else if (d.t === 'c') g.c[d.e] = { i: String(from || '').slice(0, 64), n: String(d.n || 'Player').slice(0, 20) };
     else if (d.t === 'pk') g.pk[d.e] = 1;
     else if (d.t === 'bank' && typeof d.p === 'string') g.k[d.p] = Math.max(0, Math.round(+d.v || 0));   // v7: vault total

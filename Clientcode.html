@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Baseplate — v18</title>
+<title>Baseplate — v19</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@600;700;800&display=swap" rel="stylesheet">
 <style>
@@ -76,6 +76,9 @@
   @media (max-width:640px){ .slot { width:40px; height:40px; border-radius:9px; } .slot svg{ width:18px; height:18px; } }
 
   /* ---------- interaction prompt ---------- */
+  /* v19: underwater tint (camera below a water surface) */
+  #uw { display:none; position:fixed; inset:0; pointer-events:none; z-index:4;
+    background:radial-gradient(ellipse at 50% 30%, rgba(60,150,220,0.28), rgba(10,60,120,0.55)); }
   #prompt { position:fixed; bottom:96px; left:50%; transform:translateX(-50%) translateY(8px);
     z-index:20; display:flex; align-items:center; gap:9px;
     background:rgba(13,17,23,0.55); backdrop-filter:blur(8px);
@@ -352,6 +355,38 @@
   .apane { display:none; }
   .apane.on { display:block; }
   .apinfo { font-size:12px; font-weight:700; color:rgba(255,255,255,0.5); margin:2px 0 10px; line-height:1.5; }
+  /* v19: admin tabs carry a colour, and so does every command category */
+  .atab .adot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:6px; vertical-align:1px; background:var(--ac,#01A2FF); }
+  .atab.on { background:var(--ac,#01A2FF); }
+  .atab.on .adot { background:#04121d; }
+  .ahead { display:flex; align-items:center; gap:10px; margin:2px 0 12px; padding:10px 12px; border-radius:10px;
+    background:rgba(255,255,255,0.04); border-left:4px solid var(--ac,#01A2FF); }
+  .ahead .at { font:900 14px 'Nunito Sans',sans-serif; color:#fff; }
+  .ahead .as { font-size:11.5px; font-weight:700; color:rgba(255,255,255,0.55); line-height:1.45; margin-top:2px; }
+  .acat { display:flex; align-items:center; gap:8px; margin:16px 0 8px; padding:7px 10px; border-radius:8px; cursor:pointer;
+    background:color-mix(in srgb, var(--cc,#01A2FF) 16%, transparent); border:1px solid color-mix(in srgb, var(--cc,#01A2FF) 45%, transparent);
+    color:var(--cc,#01A2FF); font:900 11px 'Nunito Sans',sans-serif; letter-spacing:1.1px; text-transform:uppercase; user-select:none; }
+  .acat .cn { margin-left:auto; font-size:10px; opacity:0.75; letter-spacing:0.4px; }
+  .acat .cv { transition:transform .15s; }
+  .acat.shut .cv { transform:rotate(-90deg); }
+  .acatbody.shut { display:none; }
+  .acmd { padding:10px 12px; margin:0 0 8px; border-radius:10px; background:rgba(255,255,255,0.045);
+    border:1px solid rgba(255,255,255,0.07); border-left:3px solid var(--cc,#01A2FF); }
+  .acmd .ct { display:flex; align-items:center; gap:8px; font:800 13px 'Nunito Sans',sans-serif; color:#fff; }
+  .acmd .cs { margin-left:auto; font:700 10.5px ui-monospace,Menlo,monospace; color:rgba(255,255,255,0.45);
+    background:rgba(0,0,0,0.25); padding:2px 6px; border-radius:5px; }
+  .acmd .cd { font-size:11.5px; font-weight:600; color:rgba(255,255,255,0.55); margin:4px 0 0; line-height:1.4; }
+  .acmd .cargs { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+  .acmd .cargs label { display:flex; flex-direction:column; gap:3px; flex:1 1 90px; min-width:84px;
+    font:800 9.5px 'Nunito Sans',sans-serif; letter-spacing:0.8px; text-transform:uppercase; color:rgba(255,255,255,0.4); }
+  .acmd .cargs .ain { margin:0; padding:7px 9px; font-size:12px; }
+  .acmd select.ain { appearance:auto; }
+  .acmd .crow { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+  .acmd .abtn.run { background:var(--cc,#01A2FF); color:#04121d; border-color:transparent; font-weight:900; }
+  .acmd .abtn.run.danger { background:#ff6b5f; color:#1d0604; }
+  .acmd .abtn.mini { background:rgba(255,255,255,0.07); }
+  .asearch { margin:0 0 4px !important; }
+  .aempty { font-size:12px; font-weight:700; color:rgba(255,255,255,0.45); padding:10px 2px; }
   .pid { font-size:11px; font-weight:600; color:rgba(255,255,255,0.42); margin-left:6px; }
   .abtn.mini { padding:5px 10px; font-size:11px; border-radius:7px; }
   .ain { width:100%; padding:9px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.14);
@@ -591,6 +626,7 @@
 
 <div id="hotbar"></div>
 <div id="prompt"></div>
+<div id="uw"></div>
 <div id="hint"></div>
 <div id="fps"></div>
 
@@ -1040,6 +1076,105 @@ function box(w, h, d, material, x, y, z, ry = 0, parent = scene) {
   parent.add(m);
   return m;
 }
+/* ================================================================
+   §3.7 WATER (v19) — real, swimmable water.
+   Any build part with `material: "water"` becomes a translucent,
+   gently rippling volume you can SWIM in (Roblox-style: float at the
+   surface, SPACE swims up, look down + forward to dive, jump at the
+   surface to hop out). It has no collider; the physics asks
+   Water.surfaceAt() instead. One shared ripple texture scrolls for
+   every pool on the map, so ten pools cost the same as one.
+================================================================ */
+const Water = {
+  boxes: [],                 // { min, max, on } world AABBs
+  mats: new Map(),
+  tex: null, tex2: null,
+  rings: [],
+  texture() {
+    if (this.tex) return this.tex;
+    const S = 128, c = document.createElement('canvas'); c.width = c.height = S;
+    const x = c.getContext('2d');
+    x.fillStyle = '#ffffff'; x.fillRect(0, 0, S, S);
+    /* soft caustic-style ripple lines, tiled seamlessly */
+    let sd = 1337;
+    const rnd = () => (sd = (sd * 16807) % 2147483647) / 2147483647;
+    x.strokeStyle = 'rgba(160,210,255,0.55)'; x.lineWidth = 2.2; x.lineCap = 'round';
+    for (let i = 0; i < 26; i++) {
+      const cx = rnd() * S, cy = rnd() * S, r = 6 + rnd() * 16, a0 = rnd() * 6.28, a1 = a0 + 1 + rnd() * 2.2;
+      for (const ox of [-S, 0, S]) for (const oy of [-S, 0, S]) { x.beginPath(); x.arc(cx + ox, cy + oy, r, a0, a1); x.stroke(); }
+    }
+    x.strokeStyle = 'rgba(255,255,255,0.9)'; x.lineWidth = 1.2;
+    for (let i = 0; i < 18; i++) {
+      const cx = rnd() * S, cy = rnd() * S, r = 4 + rnd() * 10, a0 = rnd() * 6.28, a1 = a0 + 0.6 + rnd() * 1.4;
+      for (const ox of [-S, 0, S]) for (const oy of [-S, 0, S]) { x.beginPath(); x.arc(cx + ox, cy + oy, r, a0, a1); x.stroke(); }
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = 2;
+    this.tex = t;
+    return t;
+  },
+  material(color) {
+    let m = this.mats.get(color);
+    if (!m) {
+      m = new THREE.MeshStandardMaterial({
+        color, map: this.texture(), transparent: true, opacity: 0.62,
+        roughness: 0.08, metalness: 0.15, depthWrite: false, side: THREE.DoubleSide,
+        emissive: new THREE.Color(color).multiplyScalar(0.18)
+      });
+      this.mats.set(color, m);
+    }
+    return m;
+  },
+  add(minX, minY, minZ, maxX, maxY, maxZ) {
+    const b = { min: { x: minX, y: minY, z: minZ }, max: { x: maxX, y: maxY, z: maxZ }, on: true };
+    this.boxes.push(b);
+    return b;
+  },
+  clear() { this.boxes.length = 0; for (const r of this.rings) scene.remove(r.m); this.rings.length = 0; },
+  /* the water surface above point (x,y,z), or null when it's dry */
+  surfaceAt(x, y, z) {
+    for (const b of this.boxes)
+      if (b.on && x > b.min.x && x < b.max.x && z > b.min.z && z < b.max.z && y > b.min.y - 0.05 && y < b.max.y) return b.max.y;
+    return null;
+  },
+  /* the surface of the water column under/around (x,z) (for splashes) */
+  topAt(x, z, y) {
+    for (const b of this.boxes)
+      if (b.on && x > b.min.x && x < b.max.x && z > b.min.z && z < b.max.z && y > b.min.y - 0.05 && y < b.max.y + 6) return b.max.y;
+    return null;
+  },
+  splash(x, y, z, big) {
+    if (this.rings.length > 10) return;
+    const m = new THREE.Mesh(new THREE.RingGeometry(0.6, 1.0, 20),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8, depthWrite: false, side: THREE.DoubleSide }));
+    m.rotation.x = -Math.PI / 2;
+    m.position.set(x, y + 0.06, z);
+    scene.add(m);
+    this.rings.push({ m, t: 0, max: big ? 0.8 : 0.55, s: big ? 5 : 2.6 });
+  },
+  tick(dt) {
+    if (!this.boxes.length && !this.rings.length) { if (uwEl.style.display !== 'none') uwEl.style.display = 'none'; return; }
+    if (this.tex) {
+      this.tex.offset.x = (elapsed * 0.035) % 1;
+      this.tex.offset.y = (Math.sin(elapsed * 0.3) * 0.06 + elapsed * 0.012) % 1;
+    }
+    for (let i = this.rings.length - 1; i >= 0; i--) {
+      const r = this.rings[i];
+      r.t += dt;
+      const k = r.t / r.max;
+      if (k >= 1) { scene.remove(r.m); r.m.geometry.dispose(); r.m.material.dispose(); this.rings.splice(i, 1); continue; }
+      r.m.scale.setScalar(1 + k * r.s);
+      r.m.material.opacity = 0.8 * (1 - k);
+    }
+    /* underwater tint when the camera itself is below a surface */
+    const under = this.surfaceAt(camera.position.x, camera.position.y, camera.position.z) != null;
+    const want = under ? 'block' : 'none';
+    if (uwEl.style.display !== want) uwEl.style.display = want;
+  }
+};
+
 /* world-space mesh + matching AABB collider. NOTE: collider ignores `ry`
    (physics is axis-aligned only) — only use ry=0 for solids. */
 function solid(w, h, d, material, x, y, z) {
@@ -1635,9 +1770,28 @@ function poseSalute(t) {
   T.armLz = 0.05;
 }
 
+/* v19: swimming — front crawl while moving, treading water when still.
+   Shared by the local rig and remote rigs. mv 0..1 = how much we move. */
+function poseSwimInto(o, p, mv, t) {
+  const tw = Math.PI * 2;
+  if (mv > 0.35) {
+    o.armLx = -(((p % tw) + tw) % tw); o.armRx = -((((p + Math.PI) % tw) + tw) % tw);
+    o.armLz = 0.16; o.armRz = -0.16;
+    o.legLx = Math.sin(p * 2.3) * 0.38; o.legRx = -o.legLx;
+    o.headRx = -0.85 * mv; o.headRy = Math.sin(p) * 0.18;
+  } else {
+    const s = Math.sin(t * 3.1);
+    o.armLz = 1.05 + s * 0.35; o.armRz = -o.armLz;
+    o.armLx = -0.35; o.armRx = -0.35;
+    o.legLx = Math.sin(t * 4) * 0.32; o.legRx = -o.legLx;
+    o.rootY = Math.sin(t * 2) * 0.12;
+    o.headRx = -0.05;
+  }
+}
 function evalPose(t) {
   CH.forEach(k => T[k] = 0);
   switch (animId) {
+    case 'swim':   poseSwimInto(T, phase, swimMv, t); T.rootY += swimTilt * 1.9; break;
     case 'idle':   poseIdle(t); break;
     case 'walk':   poseWalk(); break;
     case 'run':    poseRun(); break;
@@ -1838,6 +1992,7 @@ function removeDropPickup(uid) {
 
 /* interaction prompt */
 const promptEl = document.getElementById('prompt');
+const uwEl = document.getElementById('uw');          // v19: underwater tint
 promptEl.addEventListener('click', () => { if (GameLogic.dlgOpen) GameLogic.dlgNext(); else if (currentInteract) currentInteract.action(); });
 
 /* emote menu */
@@ -2705,6 +2860,14 @@ function validateRecipe(w, expectId) {
     if (B.block != null && !['grass', 'dirt', 'sand', 'stone'].includes(B.block)) return 'bad border block';
     if (B.width * 2 >= Math.min(T.size[0], T.size[1])) return 'border swallows the map';
   }
+  if (T.carve != null) {                        // v19: dug pits (pools)
+    if (!Array.isArray(T.carve) || T.carve.length > 16) return 'bad carve';
+    for (const c of T.carve) {
+      if (!c || typeof c !== 'object') return 'bad carve entry';
+      if (!num(c.x, -1000, 1000) || !num(c.z, -1000, 1000) || !num(c.w, 1, 200) || !num(c.d, 1, 200) || !num(c.depth, 1, 30)) return 'bad carve entry';
+      if (c.block != null && !['grass', 'dirt', 'sand', 'stone'].includes(c.block)) return 'bad carve block';
+    }
+  }
   const pal = T.palette || {};
   for (const k in pal) if (!hex(pal[k])) return 'bad palette color "' + k + '"';
   if (w.spawn && (!num(w.spawn.x, -T.size[0] / 2 + 8, T.size[0] / 2 - 8) ||
@@ -2732,7 +2895,7 @@ function validateGameLogic(w) {
   const items = new Set(['sword', 'gun', 'apple']);
   const TYPES = ['button', 'claim', 'dropper', 'conveyor', 'collector', 'killbrick',
     'teleport', 'checkpoint', 'pad', 'npc', 'spawner', 'pickup', 'door', 'sign',
-    'claimer', 'zwave', 'swing'];   // v16: money vault + zombie-wave pad · v18: swing set
+    'claimer', 'zwave', 'swing', 'laser', 'upgrader'];   // v16: money vault + zombie-wave pad · v18: swing set · v19: laser doors + upgraders
 
   /* items[] — custom weapons + consumables */
   if (w.items != null) {
@@ -2789,6 +2952,7 @@ function validateGameLogic(w) {
     if (typeof w.vars !== 'object' || Array.isArray(w.vars)) return 'bad vars';
     if (w.vars.maxZombies != null && !num(w.vars.maxZombies, 1, 40)) return 'bad vars maxZombies';
     if (w.vars.loseOnDeath != null && typeof w.vars.loseOnDeath !== 'boolean') return 'bad vars loseOnDeath';   // v18
+    if (w.vars.doors != null && !['auto', 'manual'].includes(w.vars.doors)) return 'bad vars doors';   // v19
   }
 
   /* build[] — static parts */
@@ -2801,7 +2965,7 @@ function validateGameLogic(w) {
       if (!num(p.pos[2], -1000, 1000)) return 'bad part pos';
       if (!Array.isArray(p.size) || p.size.length !== 3 || !num(p.size[0], 0.1, 420) || !num(p.size[1], 0.1, 220) || !num(p.size[2], 0.1, 420)) return 'bad part size on "' + (p.id || 'unnamed') + '"';
       if (p.color != null && !hex(p.color)) return 'bad part color';
-      if (p.material != null && !['plastic', 'neon', 'glass', 'metal', 'wood'].includes(p.material)) return 'bad part material';
+      if (p.material != null && !['plastic', 'neon', 'glass', 'metal', 'wood', 'water'].includes(p.material)) return 'bad part material';   // v19: water
       if (p.shape != null && !['box', 'cyl', 'ball', 'wedge'].includes(p.shape)) return 'bad part shape';
       if (p.rot != null && !num(p.rot, -360, 360)) return 'bad part rot';
       if (p.lift != null && !num(p.lift, -200, 200)) return 'bad part lift';
@@ -2845,6 +3009,7 @@ function validateGameLogic(w) {
           claims.add(e.id);
           if (e.name != null && !str(e.name, 24)) return 'claim "' + e.id + '" bad name';
           if (e.cost != null && !num(e.cost, 0, 1e9)) return 'claim "' + e.id + '" bad cost';
+          if (e.open != null && typeof e.open !== 'boolean') return 'claim "' + e.id + '" bad open';   // v19
           break;
         case 'dropper':
           if (e.every != null && !num(e.every, 1, 60)) return 'dropper "' + e.id + '" bad every';
@@ -2910,6 +3075,15 @@ function validateGameLogic(w) {
           if (e.style != null && !['glass', 'wood'].includes(e.style)) return 'door "' + e.id + '" bad style';
           if (e.swing != null && e.swing !== 1 && e.swing !== -1) return 'door "' + e.id + '" bad swing';
           if (e.range != null && !num(e.range, 3, 20)) return 'door "' + e.id + '" bad range';
+          if (e.mode != null && !['auto', 'manual'].includes(e.mode)) return 'door "' + e.id + '" bad mode';
+          break;
+        case 'laser':                                                                                       // v19
+          if (e.size != null && (!Array.isArray(e.size) || !num(e.size[0], 2, 30) || !num(e.size[1], 2, 30))) return 'laser "' + e.id + '" bad size';
+          if (e.panel != null && (!Array.isArray(e.panel) || e.panel.length !== 3 || !e.panel.every(v => num(v, -500, 500)))) return 'laser "' + e.id + '" bad panel';
+          break;
+        case 'upgrader':                                                                                    // v19
+          if (e.mult != null && !num(e.mult, 1.05, 10)) return 'upgrader "' + e.id + '" bad mult';
+          if (e.color != null && !hex(e.color)) return 'upgrader "' + e.id + '" bad color';
           break;
         case 'swing':
           if (e.seats != null && !num(e.seats, 1, 3)) return 'swing "' + e.id + '" bad seats';
@@ -2954,7 +3128,7 @@ function validateGameLogic(w) {
 
   /* the script sandbox */
   if (w.script != null) {
-    if (typeof w.script !== 'string' || w.script.length > 8000) return 'bad script';
+    if (typeof w.script !== 'string' || w.script.length > 20000) return 'bad script';
     if (w.script.trim() && WL_LINT.test(w.script)) return 'script uses a banned token';
   }
   return null;
@@ -3153,6 +3327,19 @@ function buildRecipeWorld(w) {
       else if (t < edgeBelow && edgeB >= 0) s = edgeB;    //   rim ring (the dirt edge)
     } else s = bBlock;                                //   the mountain block (stone…)
     sArr[i] = s;
+  }
+  /* v19: `carve` — dig flat-bottomed pits into the ground (pools,
+     ponds, basements). Each { x, z, w, d, depth, block } lowers every
+     column whose centre falls inside the rectangle by `depth`. */
+  if (Array.isArray(T.carve)) for (const cv of T.carve) {
+    const cb = Math.max(0, TERRAIN_BLOCKS.indexOf(cv.block || 'stone'));
+    const ix0 = Math.max(0, Math.ceil(cv.x - cv.w / 2 - x0 - 0.5)), ix1 = Math.min(sx - 1, Math.floor(cv.x + cv.w / 2 - x0 - 0.5));
+    const iz0 = Math.max(0, Math.ceil(cv.z - cv.d / 2 - z0 - 0.5)), iz1 = Math.min(sz - 1, Math.floor(cv.z + cv.d / 2 - z0 - 0.5));
+    for (let iz = iz0; iz <= iz1; iz++) for (let ix = ix0; ix <= ix1; ix++) {
+      const i = iz * sx + ix;
+      hArr[i] = Math.max(1, hArr[i] - Math.round(cv.depth));
+      sArr[i] = cb;
+    }
   }
 
   /* ---- 2. render: v18 GREEDY-MERGED SURFACE MESH (2 draw calls) ----
@@ -3588,6 +3775,7 @@ const GameLogic = {
   econSym: '$',
   entities: [],            // all entity recs
   byId: new Map(),         // id -> rec
+  commands: [],            // v19: world admin commands (Game.command)
   buttons: new Map(),      // id -> button rec
   claims: new Map(),       // id -> claim rec
   parts: [],               // gated build parts
@@ -3611,7 +3799,7 @@ const GameLogic = {
     if (!recipe || typeof recipe !== 'object') return;
     this.worldId = recipe.id;
     this.recipe = recipe;
-    this.state = { b: {}, c: {}, pk: {}, bn: {} };
+    this.state = { b: {}, c: {}, pk: {}, bn: {}, tg: {} };
     this.plotBank = {};
     this._bankT = {};
     this.claimers.length = 0;
@@ -3622,10 +3810,11 @@ const GameLogic = {
     /* v16: per-world engine overrides — zombie cap etc. Saved so a world
        exit puts the engine back exactly as it was. */
     this._savedVars = null;
-    this.loseOnDeath = false; this.doorMode = 'auto';
+    this.loseOnDeath = false; this.doorMode = 'auto'; this.doorsManual = false;
     if (recipe.vars && typeof recipe.vars === 'object' && !Array.isArray(recipe.vars)) {
       const v = recipe.vars;
       this.loseOnDeath = v.loseOnDeath === true;       // v18
+      this.doorsManual = v.doors === 'manual';          // v19: press-E house doors
       if (typeof v.maxZombies === 'number' && isFinite(v.maxZombies)) {
         this._savedVars = { maxZombies: V.maxZombies };
         V.maxZombies = Math.round(clamp(v.maxZombies, 1, 40));
@@ -3671,6 +3860,8 @@ const GameLogic = {
     this.byId.clear(); this.buttons.clear(); this.claims.clear();
     this.parts.length = 0;
     this.script = null; this.dlgOpen = false; this.dlg = null;
+    this.commands = [];                              // v19: world admin commands go with the world
+    Water.clear();
     Pet.recall(true);                                // v15: pets don't outlive the world
     for (const [, gh] of PetRemotes) scene.remove(gh.mesh);
     PetRemotes.clear();
@@ -3759,12 +3950,10 @@ const GameLogic = {
         const hide = i >= Q;
         if (hide === !!rec.qHide) return;
         rec.qHide = hide;
-        if (!rec.pad || !rec.spr) return;
-        if (!hide) {                                   // freshly queued IN — pop!
-          const was = rec.pad.visible;
-          rec.pad.visible = rec.spr.visible = true;
-          if (!was && rec.popT < 0 && rec.gate !== false) rec.popT = 0;
-        } else rec.pad.visible = rec.spr.visible = false;
+        if (!rec.pad || !rec.spr || !rec.applyVis) return;
+        const was = rec.shown === true;
+        rec.shown = rec.applyVis();
+        if (!hide && !was && rec.shown && rec.popT < 0) rec.popT = 0;   // freshly queued IN — pop!
       });
     }
   },
@@ -3780,6 +3969,7 @@ const GameLogic = {
     const color = wlIsHex(p.color) ? wlHex(p.color) : 0xb9bec4;
     const shape = p.shape || 'box';
     const material = p.material || 'plastic';
+    if (material === 'water') return this.buildWater(p, rec, clones, dx, dz);   // v19
     let mtl;
     if (material === 'neon') {       // v17: cached per color (shared = mergeable, fewer programs)
       mtl = matCache.get('wn' + color);
@@ -3835,6 +4025,35 @@ const GameLogic = {
     if (p.id) this.byId.set(p.id, rec);
     return rec;
   },
+  /* v19: a WATER part — swimmable volume (see §3.7). `pos` is the
+     centre like any part; the top face is the surface. No collider. */
+  buildWater(p, rec, clones, dx, dz) {
+    const color = wlIsHex(p.color) ? wlHex(p.color) : 0x2f8fd8;
+    const mtl = Water.material(color);
+    const cy = this.resolveY(p.pos, 1) + (p.lift || 0);
+    const [w, h, d] = p.size;
+    const g = new THREE.BoxGeometry(w, h, d);
+    const uv = g.attributes.uv;                        // world-scale ripples (1 tile ≈ 14 studs)
+    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * w / 14, uv.getY(i) * d / 14);
+    rec.waters = [];
+    for (let k = 0; k < clones; k++) {
+      const cx = p.pos[0] + dx * k, cz = p.pos[2] + dz * k;
+      const m = new THREE.Mesh(g, mtl);
+      m.position.set(cx, cy, cz);
+      m.renderOrder = 2;
+      scene.add(m);
+      rec.meshes.push(m);
+      const b = Water.add(cx - w / 2, cy - h / 2, cz - d / 2, cx + w / 2, cy + h / 2, cz + d / 2);
+      b.on = !p.requires;
+      rec.waters.push(b);
+    }
+    rec.show = () => { rec.revealT = 0; for (const m of rec.meshes) m.visible = true; for (const b of rec.waters) b.on = true; };
+    rec.hide = () => { for (const m of rec.meshes) m.visible = false; for (const b of rec.waters) b.on = false; };
+    if (p.requires) { rec.hide(); this.parts.push(rec); }
+    if (p.id) this.byId.set(p.id, rec);
+    rec.isWater = true;
+    return rec;
+  },
   /* v17 PERFORMANCE: every always-visible build part is baked into ONE
      mesh per material. A studded plastic box is 6 draw calls on its
      own (one per face group) and the shadow pass doubles it, so a
@@ -3857,7 +4076,7 @@ const GameLogic = {
   mergeGated() {
     const groups = new Map();
     for (const rec of this.parts) {
-      if (!rec.def.requires || !rec.meshes.length) continue;
+      if (!rec.def.requires || !rec.meshes.length || rec.isWater) continue;
       const key = rec.def.requires.slice().sort().join('|');
       let g = groups.get(key);
       if (!g) groups.set(key, g = []);
@@ -4029,10 +4248,15 @@ const GameLogic = {
     return s && s.n ? s.n : 'someone';
   },
 
+  ownsAnyPlot(pid) {
+    for (const k in this.state.c) if (this.state.c[k] && this.state.c[k].i === pid) return k;
+    return null;
+  },
   applyClaim(id, byId, name) {
     if (this.state.c[id]) return;
     const rec = this.claims.get(id);
     if (!rec) return;
+    if (this.ownsAnyPlot(byId)) return;   // v19: one base per player (race-safe on every screen)
     this.state.c[id] = { i: byId, n: String(name || 'Player').slice(0, 20) };
     if (rec.refresh) rec.refresh();
     this.checkGates();                    // reveal everything gated on this claim
@@ -4048,14 +4272,29 @@ const GameLogic = {
     if (rec && rec.inter) rec.inter.enabled = () => false;
   },
 
+  /* v19: TOGGLES — on/off world state that can flip back (house doors,
+     laser doors). Last-writer-wins by timestamp, so every screen and
+     the relay's stored copy settle on the same value. */
+  toggle(id) { const t = this.state.tg[id]; return t ? t[0] === 1 : null; },
+  setToggle(id, on) { WS.act('tyc', { t: 'tg', e: String(id), v: on ? 1 : 0, s: Date.now() }); },
+  applyToggle(id, v, s) {
+    const cur = this.state.tg[id];
+    if (cur && !(s > cur[1])) return false;
+    this.state.tg[id] = [v ? 1 : 0, +s || 0];
+    const rec = this.byId.get(id);
+    if (rec && rec.onToggle) rec.onToggle(v === 1 || v === true);
+    return true;
+  },
+
   applyReset() {
-    this.state = { b: {}, c: {}, pk: {}, bn: {} };
+    this.state = { b: {}, c: {}, pk: {}, bn: {}, tg: {} };
     this.plotBank = {};                 // v16: vaults empty too
     this.refreshClaimers(null);
     for (const rec of this.entities) {
       rec.buys = 0;
       if (rec.unreset) rec.unreset();
       if (rec.refresh) rec.refresh();
+      if (rec.onToggle) rec.onToggle(null);
     }
     this.checkGates();
     wlToast('World progress was reset by an admin.', true);
@@ -4087,6 +4326,12 @@ const GameLogic = {
       for (const id of pids.slice(i, i + 30)) d.pk[id] = 1;
       out.push(d);
     }
+    const tids = Object.keys(this.state.tg);             // v19: toggles
+    for (let i = 0; i < tids.length; i += 20) {
+      const d = { tg: {} };
+      for (const id of tids.slice(i, i + 20)) d.tg[id] = this.state.tg[id];
+      out.push(d);
+    }
     /* v16: vault totals, so late joiners see the real bank */
     const plots = Object.keys(this.plotBank).filter(p => (this.plotBank[p] || 0) > 0);
     if (plots.length) {
@@ -4116,6 +4361,13 @@ const GameLogic = {
           else if (k === 'bn' && s[k][id] > this.state[k][id]) { this.state[k][id] = s[k][id]; changed = true; }
         }
       }
+    /* v19: toggles — newest timestamp wins */
+    if (s.tg && typeof s.tg === 'object' && !Array.isArray(s.tg)) {
+      for (const id in s.tg) {
+        const t = s.tg[id];
+        if (Array.isArray(t) && t.length === 2) this.applyToggle(id, t[0] === 1 ? 1 : 0, +t[1] || 0);
+      }
+    }
     /* v16: vault balances (relay-stored or peer-shared) */
     if (s.k && typeof s.k === 'object' && !Array.isArray(s.k)) {
       for (const p in s.k)
@@ -4165,6 +4417,7 @@ const GameLogic = {
       this.wireNet();
       if (this._pendingScript) { this.script = this.runScript(this._pendingScript, this.recipe); this._pendingScript = null; }
       this.fire('join', [USERNAME]);
+      if (isAdmin && typeof rebuildAdminTab === 'function') rebuildAdminTab();   // v19: this world's commands appear in the menu
     }
 
     /* part reveal pop-in */
@@ -4311,6 +4564,12 @@ const GameLogic = {
   },
   applyClaimTouch(rec) {
     if (this.state.c[rec.id]) return;
+    /* v19: ONE base per player — walking through a free doorway while
+       you already own a plot just tells you so (throttled) */
+    if (this.ownsAnyPlot(MP.id)) {
+      if (elapsed - (this._oneClaimNag || -99) > 4) { this._oneClaimNag = elapsed; wlToast('You already own a base \u2014 one per player.', true); }
+      return;
+    }
     if (rec.def.cost > 0 && !Wallet.trySpend(rec.def.cost)) return;
     WS.act('tyc', { t: 'c', e: rec.id, n: USERNAME });
   },
@@ -4358,7 +4617,7 @@ const GameLogic = {
         if (d.y <= g + 0.45 && d.vy <= 0) { d.y = g + 0.45; d.vy = 0; d.grounded = true; }
       } else {
         const cv = this.conveyorAt(d.x, d.z, d.y);
-        if (cv) { d.x += cv.def.dir[0] * cv.def.speed * dt; d.z += cv.def.dir[1] * cv.def.speed * dt; d.rot += dt * 3; }
+        if (cv) { d.x += cv.def.dir[0] * cv.def.speed * dt; d.z += cv.def.dir[1] * cv.def.speed * dt; d.rot += dt * 3; this.upgradeDrop(d); }
         const g = World.groundAt(d.x, d.z, d.y + 0.6);
         if (d.y > g + 0.7) d.grounded = false;
         const col = this.collectorAt(d);
@@ -4391,6 +4650,22 @@ const GameLogic = {
         if (x > a.min.x && x < a.max.x && z > a.min.z && z < a.max.z && y > a.max.y - 2 && y < a.max.y + 1) return rec;
       }
     return null;
+  },
+  /* v19: upgraders — each one multiplies a drop's value once */
+  upgradeDrop(d) {
+    for (const rec of this.entities)
+      if (rec.kind === 'upgrader' && rec.gate !== false) {
+        if (Math.abs(rec.x - d.x) > 12 || Math.abs(rec.z - d.z) > 12) continue;
+        const a = rec.aabb;
+        if (d.x > a.min.x && d.x < a.max.x && d.z > a.min.z && d.z < a.max.z && d.y > a.min.y && d.y < a.max.y) {
+          if (!d.ups) d.ups = {};
+          if (d.ups[rec.id]) continue;
+          d.ups[rec.id] = 1;
+          d.v = Math.max(1, Math.round((d.v || 1) * rec.mult));
+          if (d.col) d.col = d.col.clone().lerp(rec.upCol, 0.6);
+          d.s = Math.min(2.2, (d.s || 0.95) * 1.1);
+        }
+      }
   },
   collectorAt(d) {
     for (const rec of this.entities)
@@ -4508,6 +4783,8 @@ const GameLogic = {
     /* refresh every entity that belongs to the plot (incl. the claim door) */
     for (const rec of this.entities)
       if (rec.def.plot === plotId || rec.id === plotId) {
+        if (this.state.tg[rec.id]) { delete this.state.tg[rec.id]; ids.push(rec.id); }   // v19: laser lock etc.
+        if (rec.onToggle) rec.onToggle(null);
         rec.buys = 0;
         if (rec.unreset) rec.unreset();
         if (rec.refresh) rec.refresh();
@@ -4516,7 +4793,7 @@ const GameLogic = {
     this.checkGates();
     /* v16: tell the room (and v7 relays: their stored state) so the
        plot doesn't resurrect for the next joiner */
-    if (!quiet) WS.emit('tyc', { t: 'pr', e: plotId, ids: ids.slice(0, 24) });
+    if (!quiet) WS.emit('tyc', { t: 'pr', e: plotId, ids: ids.slice(0, 80) });
     wlToast(ownerName + (becauseLeft ? ' left — their plot is back on the market.' : '\'s plot was reset.'), true);
   },
 
@@ -4525,6 +4802,7 @@ const GameLogic = {
   ---------------------------------------------------------------- */
   runScript(code, recipe) {
     const GL = this;
+    GL.commands = [];
     const hooks = { tick: [], join: [], leave: [], buy: [], claim: [], collect: [], win: [], tp: [], chat: [], cmd: [], zwave: [] };
     const net = {};
     const timers = { after: [], every: [] };
@@ -4616,7 +4894,46 @@ const GameLogic = {
       myPlots: () => Object.keys(GL.state.c).filter(k => GL.state.c[k].i === MP.id),
       items: () => (recipe.items || []).map(i => i.id),
       setDoors: mode => { if (['auto', 'open', 'locked'].includes(mode)) { GL.doorMode = mode; return true; } return false; },
-      pos: () => ({ x: player.x, y: player.y, z: player.z })
+      pos: () => ({ x: player.x, y: player.y, z: player.z }),
+      /* v19: ADMIN COMMANDS — a world registers its commands once; they
+         show up as tidy cards in Menu → Admin → World (grouped by
+         `cat`) AND work as chat commands (/id arg1 arg2). Only admins
+         can run them — the engine checks before `run` is ever called.
+         args: [{ n: 'amount', t: 'num'|'text'|'pick'|'player'|'plot',
+                  d: default, o: [options for pick], min, max }]
+         quick: [['label', { argName: value }], ...] one-tap presets. */
+      command: def => {
+        if (!def || typeof def !== 'object' || typeof def.run !== 'function') return false;
+        const id = String(def.id || '').toLowerCase();
+        if (!/^[a-z][a-z0-9-]{0,23}$/.test(id) || GL.commands.some(c => c.id === id) || GL.commands.length >= 60) return false;
+        const args = (Array.isArray(def.args) ? def.args : []).slice(0, 4).map(a => ({
+          n: String((a && a.n) || 'value').slice(0, 16),
+          t: ['num', 'text', 'pick', 'player', 'plot'].includes(a && a.t) ? a.t : 'text',
+          d: a && a.d != null ? a.d : null,
+          o: Array.isArray(a && a.o) ? a.o.slice(0, 16).map(v => String(v).slice(0, 24)) : null,
+          min: a && isFinite(+a.min) ? +a.min : null, max: a && isFinite(+a.max) ? +a.max : null
+        }));
+        GL.commands.push({
+          id, args, run: def.run, danger: def.danger === true,
+          cat: String(def.cat || 'World').slice(0, 20),
+          label: String(def.label || id).slice(0, 30),
+          desc: String(def.desc || '').slice(0, 140),
+          quick: (Array.isArray(def.quick) ? def.quick : []).slice(0, 8)
+            .filter(q => Array.isArray(q) && q.length === 2).map(q => [String(q[0]).slice(0, 18), q[1] && typeof q[1] === 'object' ? q[1] : {}])
+        });
+        return true;
+      },
+      plotIds: () => [...GL.claims.keys()],
+      plotOwnerName: id => (GL.state.c[id] ? GL.state.c[id].n : null),
+      toggle: id => GL.toggle(String(id)),
+      setToggle: (id, on) => { if (GL.byId.has(String(id))) { GL.setToggle(String(id), !!on); return true; } return false; },
+      /* every manual house door at once (open=true/false) */
+      setAllDoors: open => { let n = 0; for (const r of GL.entities) if (r.manual) { GL.setToggle(r.id, !!open); n++; } return n; },
+      playerPos: id => {
+        if (id == null || id === MP.id) return { x: player.x, y: player.y, z: player.z };
+        const r = MP.remotes.get(id); return r ? { x: r.x, y: r.y, z: r.z } : null;
+      },
+      playerName: id => (id == null || id === MP.id) ? USERNAME : (MP.remotes.get(id) ? MP.remotes.get(id).name : null)
     };
     try { (new Function('Game', '"use strict";\n' + code))(api); }
     catch (e) { console.error('[world script] failed to start:', e); }
@@ -4627,7 +4944,46 @@ const GameLogic = {
      refusal. Returns true when a hook claimed it (it is NOT sent as
      player chat). Engine commands like /help still work when no
      world hook wants the line. */
+  /* v19: run a registered world command (args = { name: value }) */
+  runCommand(cmd, args) {
+    if (!isAdmin) { wlToast('Admin only \u2014 unlock admin in the menu first.', true); return false; }
+    const clean = {};
+    for (const a of cmd.args) {
+      let v = args && args[a.n] != null ? args[a.n] : a.d;
+      if (a.t === 'num') {
+        v = +v; if (!isFinite(v)) v = +a.d || 0;
+        if (a.min != null) v = Math.max(a.min, v);
+        if (a.max != null) v = Math.min(a.max, v);
+      } else v = v == null ? '' : String(v).slice(0, 140);
+      clean[a.n] = v;
+    }
+    try { const r = cmd.run(clean); if (typeof r === 'string' && r) adminBanner(r.slice(0, 140)); return true; }
+    catch (e) { console.error('[world cmd ' + cmd.id + ']', e); wlToast('That command failed \u2014 see the console.', true); return false; }
+  },
+  /* chat "/id a b c" -> args in order; a player arg matches a name
+     prefix; the LAST text arg soaks up the rest of the line */
   chatCommand(text) {
+    const m = /^\/([a-z][a-z0-9-]*)\s*(.*)$/i.exec(String(text).trim());
+    const cmd = m && (this.commands || []).concat(adminEngineCommands()).find(c => c.id === m[1].toLowerCase());
+    if (cmd) {
+      const toks = m[2] ? m[2].split(/\s+/) : [], args = {};
+      cmd.args.forEach((a, i) => {
+        if (i >= toks.length) return;
+        if (a.t === 'text' && i === cmd.args.length - 1) { args[a.n] = toks.slice(i).join(' '); return; }
+        let v = toks[i];
+        if (a.t === 'player') {
+          const q = v.toLowerCase().replace(/^@/, '');
+          if (q === 'me') v = MP.id;
+          else if (q !== 'all') {
+            const hit = [...MP.remotes.values()].find(r => slug(r.name).startsWith(q) || String(r.name).toLowerCase().startsWith(q));
+            v = hit ? hit.id : (slug(USERNAME).startsWith(q) ? MP.id : v);
+          }
+        }
+        args[a.n] = v;
+      });
+      this.runCommand(cmd, args);
+      return true;
+    }
     if (!this.script || !this.script.hooks.cmd || !this.script.hooks.cmd.length) return false;
     let handled = false;
     for (const fn of this.script.hooks.cmd) {
@@ -4683,11 +5039,12 @@ const WL_BUILDERS = {
     scene.add(spr);
     rec.pad = padMesh; rec.spr = spr;
     rec.relLabel = () => {                 // price changed (buy / snapshot / reset)
-      const pos = rec.spr.position.clone();
+      const pos = rec.spr.position.clone(), vis = rec.spr.visible === true;   // v19: keep hidden labels HIDDEN
       rec.spr.material.map.dispose(); rec.spr.material.dispose();
       scene.remove(rec.spr);
       const ns = mkLabel();
       ns.position.copy(pos);
+      ns.visible = vis;
       scene.add(ns);
       rec.spr = ns;
     };
@@ -4728,14 +5085,13 @@ const WL_BUILDERS = {
       if (owned() && !e.reclaim) return;
       if (rec.pressCd > 0) rec.pressCd -= dt;
       if (caseSpin) caseSpin.rotation.y += dt * 1.4;
-      /* v18: far-away cases are hidden (each one is a few draw calls) */
-      if (caseGrp) {
-        rec.caseT = (rec.caseT || 0) - dt;
-        if (rec.caseT <= 0) {
-          rec.caseT = 0.4;
-          const far = (camera.position.x - x) ** 2 + (camera.position.z - z) ** 2 > 95 * 95;
-          if (far !== !!rec.caseFar) { rec.caseFar = far; caseGrp.visible = rec.caseOn !== false && !far; }
-        }
+      /* v18/v19: far-away pads, labels and cases are hidden (each is a
+         draw call or three — 4 plots x 30 pads adds up on a phone) */
+      rec.caseT = (rec.caseT || 0) - dt;
+      if (rec.caseT <= 0) {
+        rec.caseT = 0.4;
+        const far = (camera.position.x - x) ** 2 + (camera.position.z - z) ** 2 > 100 * 100;
+        if (far !== !!rec.caseFar) { rec.caseFar = far; rec.applyVis(); }
       }
       if (owned()) {
         rec.spr.position.y = (caseGrp ? y + 4.5 : y + 2.55) + Math.sin(elapsed * 1.6) * 0.12;
@@ -4759,12 +5115,23 @@ const WL_BUILDERS = {
       }
       rec.spr.position.y = (caseGrp ? y + 4.5 : y + 2.55) + Math.sin(elapsed * 1.6) * 0.12;
     };
+    /* v19: ONE place decides what shows — gate open, not bought (or a
+       reclaim stand), not queued out, not far away. Strict booleans:
+       three.js renders visible=undefined. */
+    rec.applyVis = () => {
+      const live = !owned() || !!e.reclaim;
+      const gateOK = rec.gate !== false;
+      const padOn = !!(gateOK && live && !rec.qHide);
+      rec.caseOn = !!(gateOK && live);
+      const near = !rec.caseFar;
+      padMesh.visible = padOn && near;
+      rec.spr.visible = padOn && near;
+      if (caseGrp) caseGrp.visible = !!(rec.caseOn && near);
+      return padOn;
+    };
     rec.refresh = () => {
       const done = owned();
-      const keep = !!(done && e.reclaim && rec.gate !== false);   // v18: strict bool (visible=undefined RENDERS in three.js)
-      padMesh.visible = rec.spr.visible = !!((!done || keep) && !rec.qHide && rec.gate !== false);
-      rec.caseOn = (!done || keep) && rec.gate !== false;
-      if (caseGrp) caseGrp.visible = !!(rec.caseOn && !rec.caseFar);
+      rec.applyVis();
       if (done && e.reclaim) {
         padMesh.material.color.setHex(0xf5c542);
         const pos = rec.spr.position.clone(), vis = rec.spr.visible;
@@ -4780,12 +5147,10 @@ const WL_BUILDERS = {
       if (caseGrp) scene.remove(caseGrp);
     };
     rec.setGate = ok => {
-      const live = !owned() || !!e.reclaim;
-      const vis = ok && live && !rec.qHide;
-      const was = padMesh.visible;
-      padMesh.visible = rec.spr.visible = vis;
-      rec.caseOn = ok && live;
-      if (caseGrp) caseGrp.visible = !!(rec.caseOn && !rec.caseFar);
+      const was = rec.shown === true;
+      rec.gate = ok;
+      const vis = rec.applyVis();
+      rec.shown = vis;
       if (ok && vis && !was && rec.popT < 0) rec.popT = 0;   // POP!
     };
   },
@@ -4832,10 +5197,19 @@ const WL_BUILDERS = {
     rec.refresh = () => { wlDropFloater(rec.spr); rec.spr = mk(); };
     let mine = null;
     rec.tick = () => {
-      /* the barrier only lets the plot owner through (on their screen) */
-      const m = GameLogic.myPlot(rec.id);
+      /* the barrier only lets the plot owner through (on their screen).
+         v19 `open: true` = an open doorway: anyone walks in (the plot's
+         laser doors, if bought, do the guarding); the glass only shows
+         while the plot is for sale */
+      const m = e.open ? (GameLogic.state.c[rec.id] ? 2 : 3) : GameLogic.myPlot(rec.id);
       if (m === mine) return;
       mine = m;
+      if (e.open) {
+        rec.collider.enabled = false;
+        bar.visible = m === 3;
+        barM.opacity = 0.18;
+        return;
+      }
       rec.collider.enabled = !m;
       barM.opacity = m ? 0.07 : 0.3;
     };
@@ -4888,11 +5262,12 @@ const WL_BUILDERS = {
     scene.add(spr);
     rec.spr = spr;
     rec.relLabel = () => {
-      const pos = rec.spr.position.clone();
+      const pos = rec.spr.position.clone(), vis = rec.spr.visible === true;   // v19: keep hidden labels HIDDEN
       rec.spr.material.map.dispose(); rec.spr.material.dispose();
       scene.remove(rec.spr);
       const ns = mkLabel();
       ns.position.copy(pos);
+      ns.visible = vis;
       scene.add(ns);
       rec.spr = ns;
     };
@@ -5291,6 +5666,25 @@ const WL_BUILDERS = {
     rec.anim = 0;
     const r2 = range * range;
     let chk = 0, want = false;
+    /* v19: MANUAL doors (`mode: "manual"`, or world vars.doors =
+       "manual") — press E / tap the prompt to open or close. The state
+       is a synced toggle, so a door you open is open for everyone and
+       for whoever joins later. Plot doors stay owner-only automatic. */
+    const manual = !e.plot && (e.mode === 'manual' || (e.mode !== 'auto' && GameLogic.doorsManual));
+    rec.manual = manual;
+    if (manual) {
+      rec.inter = addInteractable({
+        x, y: y + 3.2, z, radius: 6.5,
+        label: () => (GameLogic.toggle(rec.id) === true ? 'Close door' : 'Open door'),
+        action: () => {
+          const m = GameLogic.doorMode || 'auto';
+          if (m === 'locked') { wlToast('The doors are locked by an admin.', true); return; }
+          if (m === 'open') { wlToast('An admin is holding the doors open.', true); return; }
+          GameLogic.setToggle(rec.id, GameLogic.toggle(rec.id) !== true);
+        },
+        enabled: () => grp.visible
+      });
+    }
     rec.tick = dt => {
       chk -= dt;
       if (chk <= 0) {                     /* who's near? (5x a second) */
@@ -5304,6 +5698,7 @@ const WL_BUILDERS = {
           const mode = GameLogic.doorMode || 'auto';
           if (mode === 'open') want = true;
           else if (mode === 'locked') want = false;
+          else if (manual) want = GameLogic.toggle(rec.id) === true;
           else {
             want = nearMe;
             if (!want) for (const r of MP.remotes.values())
@@ -5319,10 +5714,179 @@ const WL_BUILDERS = {
       pivot.rotation.y = easeOut(rec.anim) * 1.5 * dir;
       rec.collider.enabled = rec.anim < 0.2;
     };
+    rec.onToggle = () => { chk = 0; };       // v19: react on the next frame
     rec.dispose = () => {
       scene.remove(grp);
+      if (rec.inter) { const ii = Interactables.indexOf(rec.inter); if (ii >= 0) Interactables.splice(ii, 1); }
       rec.collider.enabled = false;
       const ix = World.colliders.indexOf(rec.collider); if (ix >= 0) World.colliders.splice(ix, 1);
+    };
+  },
+
+  /* LASER DOORS — v19: a buyable security gate for a plot doorway.
+     Until the owner buys it (its `requires` button) the doorway is
+     OPEN to everyone. Once bought, the owner flips it ON / OFF at the
+     wall console (`panel: [x, y, z]`, press E). ON = red beams that
+     block and zap everyone but the owner; the state is a synced
+     toggle, so every screen agrees and late joiners see it too. */
+  laser(rec, e, x, y, z) {
+    rec.kind = 'laser';
+    const q = wlQuarter(e.rot), alongZ = q % 2 === 1;
+    const w = Array.isArray(e.size) ? wlNum(e.size[0], 2, 30, 14) : 14;
+    const h = Array.isArray(e.size) ? wlNum(e.size[1], 2, 30, 16) : 16;
+    const grp = new THREE.Group();
+    grp.position.set(x, y, z);
+    grp.rotation.y = q * Math.PI / 2;
+    scene.add(grp);
+    const postM = mat(0x2b3138, 0.4, 0.7);
+    const lampM = new THREE.MeshStandardMaterial({ color: 0x220707, emissive: 0xff2a2a, emissiveIntensity: 1.4, roughness: 0.4 });
+    for (const sx of [-1, 1]) {
+      const post = new THREE.Mesh(geo(0.9, h, 1.2), postM);
+      post.position.set(sx * (w / 2 - 0.45), h / 2, 0); post.castShadow = true;
+      grp.add(post);
+      const strip = new THREE.Mesh(geo(0.25, h - 1, 0.5), lampM);
+      strip.position.set(sx * (w / 2 - 0.95), h / 2, 0);
+      grp.add(strip);
+    }
+    const beamM = new THREE.MeshBasicMaterial({ color: 0xff3030, transparent: true, opacity: 0.85, depthWrite: false });
+    const hazeM = new THREE.MeshBasicMaterial({ color: 0xff2020, transparent: true, opacity: 0.07, depthWrite: false, side: THREE.DoubleSide });
+    const beams = new THREE.Group();
+    const n = Math.max(3, Math.min(8, Math.round(h / 2.4)));
+    for (let i = 0; i < n; i++) {
+      const b = new THREE.Mesh(geo(w - 2, 0.16, 0.16), beamM);
+      b.position.set(0, 0.8 + (i + 0.5) * (h - 1.6) / n, 0);
+      beams.add(b);
+    }
+    const haze = new THREE.Mesh(new THREE.PlaneGeometry(w - 2, h - 1), hazeM);
+    haze.position.y = h / 2;
+    beams.add(haze);
+    grp.add(beams);
+    rec.collider = alongZ ? World.addBox(x, y + h / 2, z, 0.8, h, w) : World.addBox(x, y + h / 2, z, w, h, 0.8);
+    rec.collider.enabled = false;
+    /* the wall console */
+    let pan = null, knobM = null;
+    const P = Array.isArray(e.panel) && e.panel.length === 3 ? e.panel.map(v => +v || 0) : null;
+    if (P) {
+      pan = new THREE.Group();
+      pan.position.set(P[0], P[1], P[2]);
+      const ped = new THREE.Mesh(geo(1.8, 3.2, 1.4), mat(0x2b3138, 0.45, 0.6));
+      ped.position.y = 1.6; ped.castShadow = true; pan.add(ped);
+      const face = new THREE.Mesh(geo(1.9, 0.3, 1.5), mat(0x1a1e24, 0.5, 0.5));
+      face.position.y = 3.3; pan.add(face);
+      knobM = new THREE.MeshStandardMaterial({ color: 0x220707, emissive: 0xff2a2a, emissiveIntensity: 1.5, roughness: 0.4 });
+      const knob = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.55, 0.35, 14), knobM);
+      knob.position.y = 3.6; pan.add(knob);
+      scene.add(pan);
+      rec.panCol = World.addBox(P[0], P[1] + 1.6, P[2], 1.8, 3.2, 1.4);
+      rec.panCol.enabled = false;
+      rec.inter = addInteractable({
+        x: P[0], y: P[1] + 3, z: P[2], radius: 4.8,
+        label: () => locked() ? 'Laser doors ON \u00b7 turn off' : 'Laser doors OFF \u00b7 turn on',
+        action: () => {
+          if (!GameLogic.myPlot(e.plot)) return;
+          const on = !locked();
+          GameLogic.setToggle(rec.id, on);
+          wlToast(on ? 'Laser doors ON \u2014 only you can enter.' : 'Laser doors OFF \u2014 anyone can walk in.');
+        },
+        enabled: () => rec.gate !== false && !!e.plot && GameLogic.myPlot(e.plot)
+      });
+    }
+    /* after purchase the lasers start ON; the owner's toggle rules after that */
+    const locked = () => GameLogic.toggle(rec.id) !== false;
+    let zapCd = 0, chk = 0;
+    const apply = () => {
+      const bought = rec.gate !== false;
+      const on = bought && locked() && GameLogic.plotOwner(e.plot) != null;
+      grp.visible = bought;
+      if (pan) { pan.visible = bought; rec.panCol.enabled = bought; }
+      beams.visible = on;
+      lampM.emissive.setHex(on ? 0xff2a2a : 0x39d353);
+      if (knobM) knobM.emissive.setHex(on ? 0xff2a2a : 0x39d353);
+      rec.collider.enabled = on && !GameLogic.myPlot(e.plot);
+      rec.on = on;
+    };
+    rec.setGate = () => apply();
+    rec.onToggle = () => apply();
+    rec.refresh = () => apply();
+    rec.tick = dt => {
+      chk -= dt;
+      if (chk <= 0) { chk = 0.3; apply(); }            // ownership changes (claim / leave)
+      if (!rec.on) return;
+      beamM.opacity = 0.62 + Math.sin(elapsed * 9) * 0.22;
+      if (zapCd > 0) { zapCd -= dt; return; }
+      if (GameLogic.myPlot(e.plot) || health <= 0) return;
+      const d = alongZ ? player.x - x : player.z - z;
+      const lat = alongZ ? Math.abs(player.z - z) : Math.abs(player.x - x);
+      if (Math.abs(d) < 1.7 && lat < w / 2 && player.y < y + h && player.y + player.h > y) {
+        zapCd = 0.6;
+        const sgn = d >= 0 ? 1 : -1;
+        hurtPlayer(20, alongZ ? sgn * 26 : 0, alongZ ? 0 : sgn * 26);
+        spawnFlash(player.x, player.y + 3, player.z, 1.4);
+        if (health > 0) wlToast('Laser doors! Only the owner can enter.', true);
+      }
+    };
+    rec.dispose = () => {
+      scene.remove(grp); if (pan) scene.remove(pan);
+      for (const c of [rec.collider, rec.panCol]) {
+        if (!c) continue;
+        c.enabled = false;
+        const ix = World.colliders.indexOf(c); if (ix >= 0) World.colliders.splice(ix, 1);
+      }
+      if (rec.inter) { const ii = Interactables.indexOf(rec.inter); if (ii >= 0) Interactables.splice(ii, 1); }
+    };
+  },
+
+  /* UPGRADER — v19: an arch you place OVER a conveyor. Every drop that
+     rides through it is worth `mult` times more (once per upgrader,
+     so two different upgraders stack). Drops glow the upgrader's
+     colour on the way out, so you can see the machine working. */
+  upgrader(rec, e, x, y, z) {
+    rec.kind = 'upgrader';
+    const q = wlQuarter(e.rot);
+    const S = Array.isArray(e.size) ? e.size : [3, 5, 6];
+    const t = wlNum(S[0], 1, 10, 3), h = wlNum(S[1], 2, 14, 5), wd = wlNum(S[2], 2, 20, 6);
+    rec.mult = wlNum(e.mult, 1.05, 10, 2);
+    const col = wlIsHex(e.color) ? wlHex(e.color) : (rec.mult >= 2 ? 0xc07fff : 0x39c7d8);
+    rec.upCol = new THREE.Color(col);
+    const grp = new THREE.Group();
+    grp.position.set(x, y, z);
+    grp.rotation.y = q * Math.PI / 2;
+    scene.add(grp);
+    const frameM = mat(0x2f3742, 0.45, 0.6);
+    const glowM = new THREE.MeshStandardMaterial({ color: new THREE.Color(col).multiplyScalar(0.25), emissive: col, emissiveIntensity: 1.2, roughness: 0.4 });
+    const cols = [];
+    const ca = Math.cos(q * Math.PI / 2), sa = Math.sin(q * Math.PI / 2);
+    for (const sz of [-1, 1]) {
+      const post = new THREE.Mesh(geo(t, h, 0.9), frameM);
+      post.position.set(0, h / 2, sz * (wd / 2 + 0.45)); post.castShadow = true;
+      grp.add(post);
+      const strip = new THREE.Mesh(geo(t * 0.6, h - 0.6, 0.2), glowM);
+      strip.position.set(0, h / 2, sz * (wd / 2 - 0.02));
+      grp.add(strip);
+      const lz = sz * (wd / 2 + 0.45);
+      cols.push(World.addBox(x + lz * sa, y + h / 2, z + lz * ca, q % 2 ? 0.9 : t, h, q % 2 ? t : 0.9));
+    }
+    const top = new THREE.Mesh(geo(t + 0.4, 1.0, wd + 1.8), frameM);
+    top.position.y = h + 0.5; top.castShadow = true; grp.add(top);
+    const topGlow = new THREE.Mesh(geo(t + 0.5, 0.3, wd + 1.9), glowM);
+    topGlow.position.y = h + 0.1; grp.add(topGlow);
+    const fieldM = new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.2, depthWrite: false, side: THREE.DoubleSide });
+    const field = new THREE.Mesh(new THREE.PlaneGeometry(wd, h - 0.4), fieldM);
+    field.rotation.y = Math.PI / 2; field.position.y = h / 2;
+    grp.add(field);
+    const spr = wlFloatText([{ text: 'x' + (+rec.mult.toFixed(2)) + ' UPGRADER', color: '#' + (col & 0xffffff).toString(16).padStart(6, '0') }], { width: 3.4, range: 45 });
+    spr.position.set(x, y + h + 1.8, z);
+    scene.add(spr);
+    rec.aabb.min.y = y - 1; rec.aabb.max.y = y + h;
+    rec.setGate = ok => {
+      grp.visible = !!ok; spr.visible = !!ok;
+      for (const c of cols) c.enabled = !!ok;
+      if (ok) spawnFlash(x, y + h / 2, z, 2);
+    };
+    rec.tick = () => { if (grp.visible) fieldM.opacity = 0.16 + Math.sin(elapsed * 4) * 0.07; };
+    rec.dispose = () => {
+      scene.remove(grp); wlDropFloater(spr);
+      for (const c of cols) { c.enabled = false; const ix = World.colliders.indexOf(c); if (ix >= 0) World.colliders.splice(ix, 1); }
     };
   },
 
@@ -5741,6 +6305,7 @@ WS.on('tyc', (d, from) => {
   }
   else if (d.t === 'c' && typeof d.e === 'string') GameLogic.applyClaim(d.e, from, d.n || 'Player');
   else if (d.t === 'pk' && typeof d.e === 'string') GameLogic.applyPick(d.e);
+  else if (d.t === 'tg' && typeof d.e === 'string') GameLogic.applyToggle(d.e.slice(0, 64), d.v === 1 ? 1 : 0, +d.s || 0);   // v19
   else if (d.t === 'r') GameLogic.applyReset();
   /* v16: vault balance sync + robbery notices + per-plot resets */
   else if (d.t === 'bank' && typeof d.p === 'string') {
@@ -6709,6 +7274,9 @@ applyBootPosition();   // v13: an admin bring lands me at the admin; otherwise I
 let yaw = 0, speed = 0, phase = 0, land = 0, climbPhase = 0;
 let climbing = false, seated = false, seatCtl = null, ladderLatch = 0, climbSide = 1;
 let climbJumpV = 0, jumpWasDown = false;   // ladder hop (§12) press tracking
+/* v19: swimming (§3.7) — tilt = how horizontal the body lies (0..1.25) */
+let swimming = false, swimTilt = 0, swimMv = 0, swimLatch = 0;
+const _swimDir = new THREE.Vector3();
 let health = V.maxHealth, timeSinceHurt = 99, lastHealth = -1;
 
 /* FALL DAMAGE — Roblox-style math.
@@ -6894,7 +7462,52 @@ function updateMovement(dt) {
   }
   }
 
-  if (!climbing) {
+  /* ---- v19 SWIMMING (Roblox-style) ----
+     Chest-deep in a water part = swimming: you float with your head
+     above the surface; SPACE swims up; look down while moving forward
+     to dive, look up to rise; C sinks. Jump at the surface to hop out
+     onto the side. No gravity, no fall damage, slower movement. */
+  if (swimLatch > 0) swimLatch -= dt;
+  const wTop = (!climbing && !seated && Water.boxes.length) ? Water.surfaceAt(player.x, player.y + 0.1, player.z) : null;
+  const wDepth = wTop != null ? wTop - player.y : 0;
+  const wasSwim = swimming;
+  swimming = wTop != null && swimLatch <= 0 && (swimming ? wDepth > 2.1 : wDepth > 2.9);
+  if (swimming && !wasSwim) {                       // SPLASH — soak up the fall
+    if (player.vy < -8) Water.splash(player.x, wTop, player.z, player.vy < -30);
+    player.vy *= 0.3; player.impact = 0;
+  }
+  if (swimming) {
+    climbing = false;
+    camera.getWorldDirection(_swimDir);
+    const sp = (run ? V.runSpeed : V.walkSpeed) * 0.72 * mySpd * GameLogic.speedMult();
+    const tvx = moving ? (tmpV.x / Math.max(len, 1)) * sp : 0;
+    const tvz = moving ? (tmpV.z / Math.max(len, 1)) * sp : 0;
+    player.vx += (tvx - player.vx) * Math.min(1, dt * 6);
+    player.vz += (tvz - player.vz) * Math.min(1, dt * 6);
+    let tvy = clamp((wDepth - 2.6) * 3, -4, 5);      // buoyancy: settle head-above-water
+    if (iF > 0.2) {                                 // dive / rise where you look (the default
+      if (_swimDir.y < -0.55)                       //  3rd-person tilt stays on the surface)
+        tvy = -sp * Math.min(1, (-_swimDir.y - 0.45) * 2) * Math.min(1, iF);
+      else if (_swimDir.y > 0.05 && wDepth > 3.2)
+        tvy = sp * Math.min(1, (_swimDir.y + 0.1) * 2) * Math.min(1, iF);
+    }
+    if (jumpDown) tvy = Math.max(tvy, 9);
+    if (keys['c'] || keys['control']) tvy = -8;
+    if (jumpEdge && wDepth < 3.6) {                 // hop out at the surface
+      swimming = false; swimLatch = 0.45;
+      player.vy = JUMPV * 0.95 * myJmp;
+      Water.splash(player.x, wTop, player.z, false);
+    } else player.vy += (tvy - player.vy) * Math.min(1, dt * 5);
+    if (moving) yaw += angWrap(Math.atan2(tmpV.x, tmpV.z) - yaw) * Math.min(1, dt * 8);
+    speed = Math.hypot(player.vx, player.vz);
+    phase += dt * (3.2 + speed * 0.3);
+    if (Math.random() < dt * speed * 0.12) Water.splash(player.x, wTop, player.z, false);   // wake ripples
+  }
+  swimMv += ((swimming && speed > 2) ? 1 : 0 - swimMv) * Math.min(1, dt * 5);
+  swimMv = clamp(swimMv, 0, 1);
+  swimTilt += ((swimming ? swimMv * 1.25 : 0) - swimTilt) * Math.min(1, dt * 6);
+
+  if (!climbing && !swimming) {
     /* normal locomotion */
     if (moving) {
       const heading = Math.atan2(tmpV.x, tmpV.z);
@@ -6915,6 +7528,8 @@ function updateMovement(dt) {
 
   moveBody(player, dt);
   GameLogic.carryPlayer(dt);   // v14: conveyors shove the player (§9.7)
+  if (swimming) player.impact = 0;                  // v19: water breaks every fall
+  else if (wTop != null) player.impact *= 0.35;     //      (shallow water helps too)
 
   /* landing squash + fall damage (height-based, see FALL_SAFE_H) */
   if (player.impact > 8) {
@@ -6935,6 +7550,7 @@ function updateMovement(dt) {
 
   /* animation state selection */
   if (climbing) setAnim('climb', 0.15);
+  else if (swimming) setAnim('swim', 0.25);
   else if (!player.grounded) setAnim('jump', 0.12);
   else if (emote) setAnim(emote.name, 0.32);
   else if (speed > (V.walkSpeed + V.runSpeed) * 0.5) setAnim('run');
@@ -6992,6 +7608,8 @@ function updateAnim(dt, t) {
   }
 
   applyChannels(out);
+  if (character.rotation.order !== 'YXZ') character.rotation.order = 'YXZ';
+  character.rotation.x = swimTilt;                  // v19: lie flat while swimming
   /* first person: the tool is the camera-anchored viewmodel — per-tool
      pose + swing / recoil math live in applyFPToolPose (§8) */
   if (cam.fp) applyFPToolPose(gunKickT > 0 ? gunKickT / 0.14 : 0);
@@ -7098,7 +7716,7 @@ function onAdminAuth(m) {
   }
 }
 const CROWN = '<svg viewBox="0 0 24 24" width="12" height="12" style="fill:#f5c542;vertical-align:-1px"><path d="M3 17.5 L3 7.5 L8.2 11.2 L12 4 L15.8 11.2 L21 7.5 L21 17.5 Z"/></svg>';
-const ANIM_OK = ['idle', 'walk', 'run', 'jump', 'climb', 'sit', 'wave', 'dance', 'salute'];
+const ANIM_OK = ['idle', 'walk', 'run', 'jump', 'climb', 'sit', 'wave', 'dance', 'salute', 'swim'];   // v19: swim
 
 /* ---- identity: username (asked ONCE, then remembered) + admin
    unlock (type the code once — you are admin forever after) ---- */
@@ -7560,6 +8178,10 @@ function remotePose(r, t) {
       c.headRx = lerp(-0.1, 0.06, k);
       break;
     }
+    case 'swim':                                                  // v19
+      poseSwimInto(c, r.phase, r.swimMv || 0, t);
+      c.rootY += (r.tilt || 0) * 1.9;
+      break;
     case 'climb': {
       c.armLx = -1.85 + s * 0.75; c.armRx = -1.85 - s * 0.75;   // alternate reach up
       c.armLz = 0.12; c.armRz = -0.12;
@@ -7822,13 +8444,18 @@ const MP = {
       r.animT += dt;
       if (r.anim === 'walk' || r.anim === 'run') r.phase += dt * (4.5 + Math.min(moved, 24) * 1.3);
       else if (r.anim === 'climb') r.phase += r.vy * dt * 1.15;
+      else if (r.anim === 'swim') r.phase += dt * (3.2 + Math.min(moved, 24) * 0.3);
+      r.swimMv = clamp((r.swimMv || 0) + (((r.anim === 'swim' && moved > 2) ? 1 : 0) - (r.swimMv || 0)) * Math.min(1, dt * 5), 0, 1);
+      r.tilt = (r.tilt || 0) + (((r.anim === 'swim') ? r.swimMv * 1.25 : 0) - (r.tilt || 0)) * Math.min(1, dt * 6);
       if (r.sw >= 0) { r.sw += dt; if (r.sw > 0.42) r.sw = -1; }          // their sword swing
       if (r.gunKick > 0) r.gunKick -= dt;                                 // their gun recoil
       remoteToolMesh(r);
       remotePose(r, t);
       const c = r.ch, p = r.pivots;
       p.g.position.set(r.x, r.y + c.rootY, r.z);
+      if (p.g.rotation.order !== 'YXZ') p.g.rotation.order = 'YXZ';
       p.g.rotation.y = r.yaw;
+      p.g.rotation.x = r.tilt || 0;              // v19: swimmers lie flat
       p.g.scale.setScalar(r.scale || 1);         // admin size (v10)
       p.torsoPivot.rotation.set(c.torsoRx, c.torsoRy, c.torsoRz);
       p.neckPivot.rotation.set(c.headRx, c.headRy, c.headRz);
@@ -7931,6 +8558,7 @@ function loop() {
     if (swingCd > 0) swingCd -= dt;                   // v14: per-sword swing cooldown
     tickWeapon(dt);                                   // v14: ammo / reload / auto fire
     updateFX(dt);                                     // tracers / flashes
+    Water.tick(dt);                                   // v19: ripples, splashes, underwater tint
 
     if (swingT >= 0) {
       swingT += dt;
@@ -8543,6 +9171,111 @@ var adminPlayersPane = null;    // the Players tab list — rebuilt on room chan
 var adminPlayerMenuPane = null; // v11: the drill-down pane (one player's full controls)
 var adminPlayerMenuTarget = null;   // {mode:'self'} | {mode:'remote',id} | {mode:'everyone'}
 var adminSetTab = null;         // switches the admin sub-tabs (set in buildAdminTab)
+var adminCurTab = 'world';      // v19: the open sub-tab survives menu rebuilds
+const adminShutCats = new Set(); // v19: collapsed command categories
+
+/* v19: Menu → Admin → World. The world script's Game.command cards,
+   grouped by category (each category its own colour, collapsible),
+   plus a few engine commands that work in every world. */
+const ADMIN_CAT_COLORS = ['#f5c542', '#4fd18b', '#01A2FF', '#ff9f43', '#b58cff', '#ff6b9a', '#3fd0d4', '#ff6b5f'];
+function adminEngineCommands() {
+  const GL = GameLogic, out = [];
+  out.push({ id: 'spawn', cat: 'Everywhere', label: 'Go to spawn', desc: 'Teleport yourself back to the world spawn.', args: [], quick: [],
+    run: () => { player.x = WORLDS_SPAWN.x; player.z = WORLDS_SPAWN.z; player.y = WORLDS_SPAWN.y; player.vx = player.vy = player.vz = 0; climbing = false; return 'Back at spawn.'; } });
+  out.push({ id: 'tpto', cat: 'Everywhere', label: 'Teleport to player', desc: 'Jump right next to another player.', args: [{ n: 'player', t: 'player', d: '' }], quick: [],
+    run: a => { const r = MP.remotes.get(a.player); if (!r) return 'Pick a player first.'; player.x = r.x + 3; player.y = r.y + 1; player.z = r.z; player.vy = 0; climbing = false; return 'Teleported to ' + r.name + '.'; } });
+  out.push({ id: 'healme', cat: 'Everywhere', label: 'Heal me', desc: 'Refill your own health.', args: [], quick: [],
+    run: () => { health = V.maxHealth; return 'Healed.'; } });
+  out.push({ id: 'clearzombies', cat: 'Everywhere', label: 'Clear all zombies', desc: 'Every zombie drops dead on your screen (they are local to each player).', args: [], quick: [],
+    run: () => { let n = 0; zombies.forEach(z => { if (!z.dead) { z.dead = true; z.deathT = 0; n++; } }); return 'Removed ' + n + ' zombies.'; } });
+  out.push({ id: 'announce', cat: 'Everywhere', label: 'Announce', desc: 'A banner on every screen in the room.', args: [{ n: 'message', t: 'text', d: '' }], quick: [],
+    run: a => { const m = String(a.message || '').trim(); if (!m) return 'Type a message first.'; WS.act('bc', { m: m.slice(0, 120) }); } });
+  if (GL.active) out.push({ id: 'resetworld', cat: 'Everywhere', label: 'Reset world progress', danger: true,
+    desc: 'Every claimed plot, bought button and toggle resets to day one for everyone. Money is kept.', args: [], quick: [],
+    run: () => { WS.act('tyc', { t: 'r' }); return 'World progress reset.'; } });
+  return out;
+}
+function buildAdminWorld(p) {
+  const GL = GameLogic;
+  const engine = adminEngineCommands();
+  const cmds = (GL.active ? GL.commands || [] : []).concat(engine);
+  const search = mkEl('input', 'ain asearch');
+  search.placeholder = 'Search commands\u2026';
+  search.autocomplete = 'off';
+  search.addEventListener('keydown', e => e.stopPropagation());
+  p.append(search);
+  if (GL.active && !(GL.commands || []).length)
+    p.append(mkEl('div', 'aempty', 'This world has no special commands \u2014 the general ones are below.'));
+  const cats = [];
+  for (const c of cmds) { let g = cats.find(x => x.name === c.cat); if (!g) cats.push(g = { name: c.cat, list: [] }); g.list.push(c); }
+  const cards = [];
+  cats.forEach((g, gi) => {
+    const col = ADMIN_CAT_COLORS[gi % ADMIN_CAT_COLORS.length];
+    const shut = adminShutCats.has(g.name);
+    const head = mkEl('div', 'acat' + (shut ? ' shut' : ''), `<span class="cv">\u25be</span>${esc(g.name)}<span class="cn">${g.list.length} command${g.list.length === 1 ? '' : 's'}</span>`);
+    head.style.setProperty('--cc', col);
+    const body = mkEl('div', 'acatbody' + (shut ? ' shut' : ''));
+    head.addEventListener('click', () => {
+      const s = !body.classList.contains('shut');
+      body.classList.toggle('shut', s); head.classList.toggle('shut', s);
+      if (s) adminShutCats.add(g.name); else adminShutCats.delete(g.name);
+    });
+    p.append(head, body);
+    for (const c of g.list) {
+      const card = mkEl('div', 'acmd');
+      card.style.setProperty('--cc', col);
+      const sig = '/' + c.id + c.args.map(a => ' ' + a.n).join('');
+      card.append(mkEl('div', 'ct', `${esc(c.label)}<span class="cs">${esc(sig)}</span>`));
+      if (c.desc) card.append(mkEl('div', 'cd', esc(c.desc)));
+      const inputs = {};
+      if (c.args.length) {
+        const row = mkEl('div', 'cargs');
+        for (const a of c.args) {
+          const lab = mkEl('label', null, esc(a.n));
+          let inp;
+          if (a.t === 'pick' || a.t === 'player' || a.t === 'plot') {
+            inp = mkEl('select', 'ain');
+            let opts = [];
+            if (a.t === 'pick') opts = (a.o || []).map(v => [v, v]);
+            else if (a.t === 'player') {
+              opts = [[MP.id, USERNAME + ' (you)']].concat([...MP.remotes.values()].map(r => [r.id, r.name]));
+              if ((a.o || []).includes('all')) opts.unshift(['all', 'Everyone']);
+            } else opts = [...GL.claims.keys()].map(k => [k, (GL.claims.get(k).def.name || k) + (GL.state.c[k] ? ' \u00b7 ' + GL.state.c[k].n : ' \u00b7 free')]);
+            for (const [v, t] of opts) { const o = document.createElement('option'); o.value = v; o.textContent = t; inp.append(o); }
+            if (a.d != null && opts.some(o => o[0] === String(a.d))) inp.value = String(a.d);
+          } else {
+            inp = mkEl('input', 'ain');
+            inp.type = a.t === 'num' ? 'number' : 'text';
+            if (a.t === 'num') { if (a.min != null) inp.min = a.min; if (a.max != null) inp.max = a.max; }
+            inp.value = a.d != null ? String(a.d) : '';
+            inp.placeholder = a.n; inp.autocomplete = 'off'; inp.maxLength = 140;
+            inp.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') go(); });
+          }
+          inputs[a.n] = inp;
+          lab.append(inp); row.append(lab);
+        }
+        card.append(row);
+      }
+      const read = () => { const o = {}; for (const k in inputs) o[k] = inputs[k].value; return o; };
+      const exec = args => {
+        const run = () => GL.runCommand(c, args);
+        if (c.danger) askConfirm(c.label + '?', c.desc || 'Are you sure?', c.label, run); else run();
+      };
+      const go = () => exec(read());
+      const btns = mkEl('div', 'crow');
+      btns.append(actBtn('Run', go, 'run' + (c.danger ? ' danger' : '')));
+      for (const [ql, qa] of c.quick) btns.append(actBtn(ql, () => exec(Object.assign(read(), qa)), 'mini'));
+      card.append(btns);
+      body.append(card);
+      cards.push({ card, text: (c.label + ' ' + c.desc + ' ' + c.id + ' ' + c.cat).toLowerCase() });
+    }
+  });
+  search.addEventListener('input', () => {
+    const q = search.value.trim().toLowerCase();
+    for (const x of cards) x.card.style.display = !q || x.text.includes(q) ? '' : 'none';
+    if (q) { p.querySelectorAll('.acatbody').forEach(b => b.classList.remove('shut')); p.querySelectorAll('.acat').forEach(b => b.classList.remove('shut')); }
+  });
+}
 
 function stateBtn(key, label) {       // mini toggle that tracks V[key] live (God / Fly)
   const b = mkEl('button', 'abtn mini');
@@ -8887,32 +9620,49 @@ function buildAdminTab() {
 
   list.append(mkEl('div', null, `<div class="adminbadge">${CROWN} Admin — world controls unlocked</div>`));
 
-  /* ---- the sub-tab bar: Rules / Players / Entities / Server ----
-     (v11: the Give tab merged into the Players cards) */
-  const TABS = [['rules', 'Rules'], ['players', 'Players'],
-    ['ents', 'Entities'], ['server', 'Server']];
+  /* ---- v19: the sub-tab bar — World / Players / Rules / Zombies /
+     Server. Every tab has its own colour and a header card that says
+     in one line what lives there. The open tab survives a rebuild. ---- */
+  const TABS = [
+    ['world', 'World', '#f5c542', 'World commands', 'Everything this world can do \u2014 money, bases, doors, teleports, events. Tap Run, or type the /command in chat.'],
+    ['players', 'Players', '#4fd18b', 'Players', 'Tap a player to give items, heal, smite, resize, teleport or kick them.'],
+    ['rules', 'Rules', '#01A2FF', 'Room rules', 'Movement, health, combat and time of day for EVERYONE here \u2014 the relay remembers them for new joiners.'],
+    ['ents', 'Zombies', '#ff6b5f', 'Zombies', 'Spawn, clear and tune the zombie horde. Tuning is part of the room rules.'],
+    ['server', 'Server', '#b58cff', 'Server', 'Broadcasts, world reset and this admin session.']];
+  const TAB_KEYS = TABS.map(t => t[0]);
+  if (!TAB_KEYS.includes(adminCurTab)) adminCurTab = 'world';
   const bar = mkEl('div', 'atab-bar');
   adminSetTab = k => {          // 'pmenu' (a player's drill-down) keeps Players lit
+    if (TAB_KEYS.includes(k)) adminCurTab = k;
     bar.querySelectorAll('.atab').forEach(x =>
       x.classList.toggle('on', x.dataset.atab === k || (k === 'pmenu' && x.dataset.atab === 'players')));
     list.querySelectorAll('.apane').forEach(p => p.classList.toggle('on', p.dataset.apane === k));
     if (k === 'players') buildAdminPlayers();
   };
-  TABS.forEach(([k, label], i) => {
-    const b = mkEl('button', 'atab' + (i === 0 ? ' on' : ''), label);
+  TABS.forEach(([k, label, col]) => {
+    const b = mkEl('button', 'atab' + (k === adminCurTab ? ' on' : ''), '<span class="adot"></span>' + label);
     b.dataset.atab = k;
+    b.style.setProperty('--ac', col);
     b.addEventListener('click', () => adminSetTab(k));
     bar.append(b);
   });
   list.append(bar);
 
-  const pane = (key, info) => {          // one sub-tab pane (Rules starts visible)
-    const p = mkEl('div', 'apane' + (key === 'rules' ? ' on' : ''));
+  const pane = (key, info) => {          // one sub-tab pane (the remembered tab starts visible)
+    const p = mkEl('div', 'apane' + (key === adminCurTab ? ' on' : ''));
     p.dataset.apane = key;
-    if (info) p.append(mkEl('div', 'apinfo', info));
+    const T = TABS.find(t => t[0] === key);
+    if (T) {
+      const h = mkEl('div', 'ahead', `<div><div class="at">${T[3]}</div><div class="as">${T[4]}</div></div>`);
+      h.style.setProperty('--ac', T[2]);
+      p.append(h);
+    } else if (info) p.append(mkEl('div', 'apinfo', info));
     list.append(p);
     return p;
   };
+
+  /* ================= WORLD — this world's commands, by category ================= */
+  buildAdminWorld(pane('world'));
   const sect = (p, title) => p.append(mkEl('div', 'msection', title));
   const fmtClock = v => {
     const h = Math.floor(v) % 24, m = Math.round((v - Math.floor(v)) * 60);
@@ -8920,7 +9670,7 @@ function buildAdminTab() {
   };
 
   /* ================= RULES — the whole room, now and for joiners ================= */
-  const wp = pane('rules', 'Room rules — these apply to EVERYONE in the world and to whoever joins later (the relay remembers them).');
+  const wp = pane('rules');
   wp.append(bindSlider('dayTime', 'Time of Day', [0, 24, 0.1], fmtClock));
   wp.append(bindSlider('daySpeed', 'Day Cycle Speed', [0, 2, 0.05],
     v => v === 0 ? 'Frozen' : (+v).toFixed(2) + ' h/s'));
@@ -8971,8 +9721,7 @@ function buildAdminTab() {
     MP.connected ? 'Live' : MP.state === 'kicked' ? 'Removed by an admin' : 'Offline'));
 
   /* ================= PLAYERS — cards: you, everyone else, everyone ================= */
-  const pp = pane('players',
-    'Click a player to open their controls — give items, smite, size, speed, jump, teleport, kick… everything in one place.');
+  const pp = pane('players');
   adminPlayersPane = pp;
   buildAdminPlayers();
 
@@ -8980,7 +9729,7 @@ function buildAdminTab() {
   adminPlayerMenuPane = pane('pmenu');
 
   /* ================= ENTITIES — zombies ================= */
-  const ep = pane('ents', 'Zombie horde control — the tuning below is part of the room rules, so everyone gets it.');
+  const ep = pane('ents');
   const ebtns = mkEl('div', 'btnrow');
   ebtns.append(actBtn('Spawn Zombie Here', () => {
     if (!spawnZombie(player.x + 3 + Math.random() * 5, player.z + 3 + Math.random() * 5))
@@ -9000,7 +9749,7 @@ function buildAdminTab() {
   ep.append(bindSlider('maxZombies', 'Max Zombies', [1, 30, 1]));
 
   /* ================= SERVER — broadcasts + session ================= */
-  const vp = pane('server', 'Room-wide messages and this admin session.');
+  const vp = pane('server');
   const bcIn = mkEl('input', 'ain');
   bcIn.placeholder = 'Broadcast a message to every screen…';
   bcIn.maxLength = 120; bcIn.autocomplete = 'off';
