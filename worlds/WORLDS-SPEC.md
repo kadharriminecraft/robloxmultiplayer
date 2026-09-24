@@ -777,21 +777,23 @@ default 3.4), `pool` (0–1, ground-light strength, default 0.5),
 admin sliders in the Rules tab. A car clip yeets with `carYeet` power
 (spinning Roblox fling) and deals `carDamage`.
 
-### 7.30 The worlds (v22)
-* **baseplate** — the built-in template fallback.
-* **island-world** — a terrain place to build on.
-* **gold-rush-tycoon** — plots, droppers, raids. v21: every weapon is
-  its OWN case — claim a plot and all 8 weapon pads (sword → storm
+### 7.30 The worlds (v23)
+
+* **baseplate** — the classic flat builder's canvas.
+* **island-world** — terrain + water.
+* **tycoon-world** — Gold Rush: plots, droppers, raids. Every weapon
+  is its OWN case — claim a plot and all 8 weapon pads (sword → storm
   pet) are visible with the weapon spinning inside; buy them one by
-  one, re-equip free forever (`reclaim`). v22: cases spread out and
-  `economy.epoch: 22` (see §7.36 — bumping it resets everyone's saved
-  buys/claims; claims also now only count while their owner is
-  actually in the room).
-* **neighborhood-world** — the suburb. v21: 22 street lamps that
-  light up at night, NPC traffic yeets on contact (tunable rules).
-  v22: two trampolines in the park (§7.35), NPC cars glow at night
-  (headlight + taillight sprites, no real lights).
-* **obby-world** — Rainbow Rush v3: see §7.33.
+  one, re-equip free forever (`reclaim`). v23: all 32 display cases
+  sit ON real platform strips spaced 7 studs (two museum rows per
+  plot, gold center line); `economy.epoch: 22` (see §7.36 — bumping
+  it resets everyone's saved buys/claims; claims only count while
+  their owner is actually in the room).
+* **neighborhood-world** — the suburb: 22 street lamps that light up
+  at night, NPC traffic yeets on contact (tunable rules), two park
+  trampolines (§7.35), NPC cars glow at night (headlight + taillight
+  sprites).
+* **obby-world** — Rainbow Rush v4: see §7.33.
 
 ### 7.31 `spinner` — the rotating hazard bar (v21.1 obby kit)
 ```json
@@ -826,37 +828,49 @@ clock, no sync). Re-appearing under a player pops them ON TOP
 instead of trapping them; the last moments before a vanish pulse a
 warning glow. Admin-patchable: `period`, `on` (both live).
 
-### 7.33 obby-world — Rainbow Rush v3 (v22)
+### 7.33 obby-world — Rainbow Rush v4 (v23)
 REDESIGNED to be SIMPLE and EASY (the v21.1 version was too hard
-and parts clipped): 139 build parts + 60 entities, ~19 KB, 8 easy
+and parts clipped): 156 build parts + 64 entities, ~21 KB, 8 easy
 stages — rainbow steps with safety rails, a wide beam walk with one
 slow spinner, a TRAMPOLINE alley (steer while airborne!), a
 forgiving blink bridge, two slow movers over lava, an easy spinner
 gauntlet with a rideable bonk rotor, a launch-pad finale — and then
-THE PARKING LOT: a huge striped lot with lamp posts, an attendant
-booth, TWO drivable cars (the stainless CYBERTRUCK + a blocky
-runabout — §7.34) and a telepad home. 8 checkpoints; the kill floor
-at y −30 runs under everything. Regenerate with
-`scripts/gen_oby3.py` or author a new one per §8.
+THE PARKING LOT: a HUGE striped lot (118 × 130) with six lamp posts,
+an attendant booth, TWO drivable cars (the life-size CYBERTRUCK + a
+blocky runabout — §7.34), a telepad home, and a COLLAPSIBLE HOUSE to
+smash with the truck (§7.37 — it rebuilds every 25 s). 8
+checkpoints; the kill floor at y −30 runs under everything.
+Regenerate with `scripts/gen_oby3.py` or author a new one per §8.
 
-### 7.34 `vehicle` — the drivable car (v22)
+### 7.34 `vehicle` — the drivable car (v23: life-size)
 ```json
 { "id": "cybertruck", "type": "vehicle", "pos": [0, 16.2, 500],
-  "rot": 0, "model": "cybertruck", "speed": 42, "accel": 20,
-  "turn": 1.7, "color": "#c3c8cf" }
+  "rot": 0, "model": "cybertruck", "speed": 42, "accel": 14,
+  "turn": 1.15, "color": "#c3c8cf" }
 ```
 A car the players DRIVE. Walk up → the `Drive` prompt (E or tap) →
 joystick / WASD steers (fwd/back = throttle, left/right = steer),
-E hops out beside the car. `model` is `cybertruck` (the angular
-stainless wedge, default) or `blocky`. Tuning: `speed` (8–70,
-top speed studs/s), `accel` (4–40), `turn` (0.4–2.6 rad/s at full
-lock, scales with speed). The car is a REAL collider (walking
-players get shoved), follows the ground, and bounces off walls.
-At night it earns a REAL headlight spotlight plus white/red glow
-bars — taillights flash when braking. Multiplayer: the driver
-broadcasts the car's pose at ~8 Hz (`veh` world events — no worker
-changes needed); other screens ease their copy toward it. Admin
-patches retune `speed` / `accel` live.
+E hops out beside the car. `model` is `cybertruck` (default) or
+`blocky`:
+* **cybertruck** — LIFE-SIZE: 15 studs nose to tail (the player is
+  5.4), a one-piece stainless wedge with the full-width front light
+  bar, wraparound glass canopy, black cladding + wheel-arch band and
+  the rear red strip. The cabin is tall enough that the driver RIDES
+  VISIBLE — seated on a real bucket seat (dashboard, steering wheel,
+  console) seen through the transparent glass. Its headlight is a
+  REAL spotlight at night (620 cd) and it SMASHES house panels
+  (§7.37) above ~13 studs/s.
+* **blocky** — the chunky 10-stud runabout; the driver hides (its
+  cab is too small for a seated rig).
+Tuning: `speed` (8–70 top speed studs/s), `accel` (4–40), `turn`
+(0.4–2.6 rad/s at full lock, scales with speed). The car is a REAL
+collider (walking players get flung along its direction of travel —
+diagonal, like every v23 yeet), follows the ground, and bounces off
+walls. At night both models get white/red glow bars — taillights
+flash when braking. Multiplayer: the driver broadcasts the car's pose
+at ~8 Hz (`veh` world events — no worker changes needed); other
+screens ease their copy toward it (and their houses smash on contact
+with the eased pose). Admin patches retune `speed` / `accel` live.
 
 ### 7.35 `trampoline` — the bounce pad (v22)
 ```json
@@ -883,6 +897,39 @@ relay-stored state without one is legacy and is ignored by epoch'd
 worlds. v22 also fixed orphaned claims: a stored claim only counts
 while its owner is actually in the room (MP ids are per-session).
 
+### 7.37 `house` — the collapsible house (v23)
+```json
+{ "id": "smash-house", "type": "house", "pos": [34, 15.25, 552],
+  "size": [20, 4.6, 16], "rebuild": 25, "rot": 1,
+  "wall": "#e8e0d0", "roof": "#c0392b", "trim": "#8a6a44" }
+```
+A small basic home assembled from BREAKABLE panels: four panel-grid
+walls (an open doorway + window glass), two roof slopes and the
+gable ends. Drive a `vehicle` (§7.34) through it above ~13 studs/s
+and the panels it touches BLAST OUT along the car's direction,
+tumble, bounce on the ground, settle and fade — pure demolition
+physics. Smite lightning flattens every panel in its radius too.
+Each wall is a real collider until it loses its first panel (then
+you can walk through the hole your truck made). When every panel
+is down, the house rebuilds itself after `rebuild` seconds (0 =
+one-shot — it stays demolished) with a pop-in, ready for another
+run. `size` is `[width, wallHeight, depth]` (footprint 8–30 each,
+height 3–8); `rot` in DEGREES turns the door (0 = −z, 90 = −x, 180 = +z, 270 = +x). Colors:
+`wall`, `roof`, `trim`. Admin-patchable: `rebuild`. Multiplayer:
+every screen runs the smash against the cars it can see — the
+driver's screen is exact, remote screens break the same panels a
+beat later off the eased pose.
+
+### 7.38 Lighting v3 (v23) — the Roblox look
+The engine's night is now properly DARK so lights read: sun/hemisphere
+bottom out near zero at midnight, the environment IBL dims to ~16 %
+(you rarely need to care), and a moon rises opposite the sun. Lamp
+entities (§7.28) get pooled PointLights at ~3× their v22 intensity —
+a lamp now draws a real pool of light on the ground under its head,
+plus its emissive bulb, additive glow sprite and ground decal. Use
+`lamp` entities wherever a world should feel lit at night — the pool
+follows the nearest 8 posts to each player automatically.
+
 ### 8. Building a world JSON with AI (v21.1)
 The client is a GENERIC ENGINE: it knows nothing about any map.
 A world JSON that passes `validateRecipe` + `validateGameLogic`
@@ -891,11 +938,11 @@ renders and plays, full stop. To have an AI build you a new map:
 2. Ask for a single JSON file `{id,name,desc,spawn,sky,terrain,
    scatter,build,logic,vars}` — the vocabulary is: `build[]` static
    parts (§5: `pos/size/color/material/shape/rot/lift/repeat/
-   noCollide/id/requires`) and the 25 `logic[]` entity types
-   (§7.1–§7.35: button claim dropper conveyor collector killbrick
+   noCollide/id/requires`) and the 26 `logic[]` entity types
+   (§7.1–§7.37: button claim dropper conveyor collector killbrick
    teleport checkpoint pad npc spawner pickup door sign claimer
    zwave swing laser upgrader car mover lamp spinner blink vehicle
-   trampoline).
+   trampoline house).
 3. Drop the file in `worlds/` and add one entry to `worlds/index.js`
    (the `/api/worlds` manifest the worker serves). No client
    changes, ever — that is the point.
