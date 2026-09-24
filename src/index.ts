@@ -479,6 +479,18 @@ export class MyDurableObject {
   async _gameApply(d, from) {
     if (!d || typeof d !== 'object') return;
     if (d.t === 'r') { await this.state.storage.delete('gstate').catch(() => {}); return; }
+    /* v22: economy.epoch — a client announces the world's progress
+       epoch; if the stored state is from an older epoch, wipe it (the
+       world JSON bumped the number = reset everyone's progress) */
+    if (d.t === 'ep' && typeof d.v === 'number') {
+      let g = await this.state.storage.get('gstate').catch(() => null);
+      const v = Math.round(d.v);
+      if (!g || typeof g !== 'object' || g.ep !== v) {
+        g = { ep: v };
+        await this.state.storage.put('gstate', g).catch(() => {});
+      }
+      return;
+    }
     if (d.t === 'pr' && typeof d.e === 'string') {
       let g = await this.state.storage.get('gstate').catch(() => null);
       if (!g || typeof g !== 'object') return;              // nothing stored yet
