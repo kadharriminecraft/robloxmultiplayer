@@ -628,6 +628,26 @@ the live stats · `Game.zombies(n, x, z, r)` — spawn a wave around a
 point · `Game.resetWorld()` — broadcast a full reset ·
 `Game.resetPlot(plotId)`.
 
+**v25 block-physics toolkit (natural-disaster maps):**
+`Game.debris(x, y, z, w, h, d, color, count, power)` — spawn up to 40
+physics blocks (`w×h×d` studs each, `#rrggbb` color) scattered around
+(x,y,z), launched with `power` (0 = just drop). Blocks tumble, bounce,
+stack and settle via the same v24 rigid-body engine that crumbles the
+smash house; settled blocks linger ~4s, fade, and recycle (cap 120
+live). `Game.blast(x, y, z, radius, power)` — a shockwave that hurls
+every loose block (and any house rubble) away from a point. Both are
+LOCAL visual effects: drive them from `Game.onNet`/`Game.broadcast`
+hooks so every screen runs the same disaster, e.g.
+
+```js
+Game.onNet('quake', function (d) {
+  var p = Game.pos();                                  // my own screen's chunk
+  Game.debris(p.x, p.y + 6, p.z, 3, 3, 3, '#8a7a63', 24, 26);
+  Game.blast(d.x, d.y, d.z, 40, 30);
+});
+```
+
+
 **v18 world-admin API:** `Game.isAdmin()` (me, verified by the relay
 admin code) / `Game.isAdmin(fromId)` — trust an `onNet` message only
 when the SENDER is an admin · `Game.setTime(h)` (local sky; broadcast
@@ -897,7 +917,7 @@ relay-stored state without one is legacy and is ignored by epoch'd
 worlds. v22 also fixed orphaned claims: a stored claim only counts
 while its owner is actually in the room (MP ids are per-session).
 
-### 7.37 `house` — the collapsible house (v23)
+### 7.37 `house` — the collapsible house (v23, v26 total collapse)
 ```json
 { "id": "smash-house", "type": "house", "pos": [34, 15.25, 552],
   "size": [20, 4.6, 16], "rebuild": 25, "rot": 1,
@@ -906,9 +926,16 @@ while its owner is actually in the room (MP ids are per-session).
 A small basic home assembled from BREAKABLE panels: four panel-grid
 walls (an open doorway + window glass), two roof slopes and the
 gable ends. Drive a `vehicle` (§7.34) through it above ~13 studs/s
-and the panels it touches BLAST OUT along the car's direction,
-tumble, bounce on the ground, settle and fade — pure demolition
-physics. Smite lightning flattens every panel in its radius too.
+and the panels it touches BLAST OUT along the car's direction — and
+v26 takes the WHOLE house with them: a DEMOLITION WAVE ripples out
+from the impact, nearest panels first, over about a second — walls
+buckle outward, the roof pancakes in — until every single panel is
+physics rubble on the slab. The v24 PHYSICS ENGINE (§7.40) then
+makes each piece TUMBLE, bounce, stack on the others and slide to
+rest as a real PILE that keeps lying there (it fades only near the
+`rebuild` moment, or ~26 s on a one-shot). Driving through the pile
+kicks the pieces around. Smite lightning triggers the same total
+collapse from its strike point.
 Each wall is a real collider until it loses its first panel (then
 you can walk through the hole your truck made). When every panel
 is down, the house rebuilds itself after `rebuild` seconds (0 =
@@ -929,6 +956,60 @@ a lamp now draws a real pool of light on the ground under its head,
 plus its emissive bulb, additive glow sprite and ground decal. Use
 `lamp` entities wherever a world should feel lit at night — the pool
 follows the nearest 8 posts to each player automatically.
+
+### 7.39 v24 — party lamps (`lamp.strobe`)
+```json
+{ "id": "pool-lamp-nw", "type": "lamp", "pos": [-89, "ground", 26],
+  "color": "#ff4fd8", "intensity": 2.0, "range": 26, "radius": 3.0,
+  "pool": 0.55, "headSize": 0.45, "strobe": true }
+```
+`strobe: true` turns a lamp into a PARTY LIGHT: after dark its hue
+cycles continuously (slow rainbow, gentle brightness pulse) — bulb,
+glow, ground pool and the pooled real light all follow. Six of them
+around a pool read as a pool party. Use sparingly: strobing lamps
+re-tint every frame (a handful is free, a hundred is not).
+
+### 7.40 v24 — the physics engine (PHYS) behind the house
+The collapsible house (§7.37) now runs on a real RIGID-BODY engine:
+every broken panel is a full 3D box body — position + quaternion +
+linear/angular velocity, box inertia — solved with OBB/OBB SAT
+contact generation (up to 4 clipped contact points per pair) and
+sequential impulses with restitution, Coulomb friction and a
+Baumgarte bias, at a fixed 60 Hz step (≤ 2 substeps/frame). Panels
+now TUMBLE, BOUNCE, STACK ON EACH OTHER, slide down the pile and go
+to sleep when settled. Three extras make the crumble read right:
+- **demolition wave (v26)** — a real ram (or a smite strike) doesn't
+  punch a hole, it takes the WHOLE house: every panel still standing
+  is queued with a delay that grows with distance from the impact,
+  so the structure visibly ripples apart nearest-first over ~1 s;
+- **rubble plowing (v26)** — `PHYS.kick(cx, cz, hx, hz, y0, y1, vx,
+  vy, vz)` wakes and shoves every body inside a world-space box, so
+  a truck driving through its own rubble parts the pile;
+- **blast shockwave** — smite lightning (and `house.blast`) adds an
+  impulse away from the blast center to every loose chunk already
+  on the ground.
+World-recipe knobs are unchanged (`size`, `rebuild`, colors); the
+client API `PHYS.add/remove/clear/blast/kick` is what future
+natural-disaster entities will drive.
+
+### 7.41 v24 — smite strikes NEAR you, NPC cars light the road
+Admin lightning now lands at a random spot 2.5–7 studs from the
+target (picked once by the sender, so every screen agrees where the
+crater is) and the victim is hurled AWAY from the strike — a
+different random compass every bolt, 1.35× power horizontally.
+NPC traffic cars (§7.25) now carry real-looking headlights at night:
+bigger additive glows plus a soft BEAM wash laid on the road ahead
+of each car (zero real lights — a street of traffic still costs
+nothing). Straight-on car hits fling you along the car's direction
+of travel with a shallow rise (the v24 yeet-steal fix means the
+fling survives even while you hold the joystick).
+
+### 7.42 v24 — the built-in Flashlight
+`flashlight` is a built-in item id (like `sword`/`gun`/`apple`):
+give it from the admin Players menu → Give Items (works on yourself,
+any player, or everyone). Equip it and the beam comes ON; click/tap
+to toggle it off/on. The beam is a real SpotLight that follows your
+head and aims wherever the CAMERA looks — first or third person.
 
 ### 8. Building a world JSON with AI (v21.1)
 The client is a GENERIC ENGINE: it knows nothing about any map.
