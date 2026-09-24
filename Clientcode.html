@@ -2013,7 +2013,7 @@ function removeDropPickup(uid) {
 /* interaction prompt */
 const promptEl = document.getElementById('prompt');
 const uwEl = document.getElementById('uw');          // v19: underwater tint
-promptEl.addEventListener('click', () => { if (GameLogic.dlgOpen) GameLogic.dlgNext(); else if (currentInteract) currentInteract.action(); });
+promptEl.addEventListener('click', () => { if (GameLogic.dlgOpen) GameLogic.dlgNext(); else if (VEH.riding) VEH.exit(); else if (currentInteract) currentInteract.action(); });
 
 /* emote menu */
 const EMOTES = [
@@ -2731,6 +2731,16 @@ let lastPromptKey = '\0';
 function addInteractable(it) { Interactables.push(it); return it; }
 
 function updateInteractables() {
+  /* v22: driving replaces the prompt — E hops out of the car */
+  if (VEH.riding) {
+    currentInteract = null;
+    if (lastPromptKey !== '\u0001') {
+      lastPromptKey = '\u0001';
+      promptEl.innerHTML = '<span class="key">E</span>Exit car';
+      promptEl.classList.add('show');
+    }
+    return;
+  }
   let best = null, bd = Infinity;
   const px = player.x, py = player.y + 2.7, pz = player.z;
   for (const it of Interactables) {
@@ -2938,6 +2948,7 @@ function validateGameLogic(w) {
   const TYPES = ['button', 'claim', 'dropper', 'conveyor', 'collector', 'killbrick',
     'teleport', 'checkpoint', 'pad', 'npc', 'spawner', 'pickup', 'door', 'sign',
     'claimer', 'zwave', 'swing', 'laser', 'upgrader', 'car', 'mover', 'lamp',
+    'vehicle', 'trampoline',   // v22: drivable cars + bounce pads
     'spinner', 'blink'];   // v16 vault+waves · v18 swings · v19 lasers · v20 CARS · v21 MOVERS+LAMPS · v21.1 SPINNERS+BLINKS (obby kit)
 
   /* items[] — custom weapons + consumables */
@@ -3164,6 +3175,21 @@ function validateGameLogic(w) {
           if (e.color != null && !hex(e.color)) return 'lamp "' + e.id + '" bad color';
           if (e.intensity != null && !num(e.intensity, 0.1, 4)) return 'lamp "' + e.id + '" bad intensity';
           if (e.range != null && !num(e.range, 8, 80)) return 'lamp "' + e.id + '" bad range';
+          if (e.radius != null && !num(e.radius, 1, 8)) return 'lamp "' + e.id + '" bad radius';   // v22
+          if (e.pool != null && !num(e.pool, 0, 1)) return 'lamp "' + e.id + '" bad pool';
+          if (e.headSize != null && !num(e.headSize, 0.25, 1.5)) return 'lamp "' + e.id + '" bad headSize';
+          break;
+        case 'vehicle':                                                                                            // v22
+          if (e.speed != null && !num(e.speed, 8, 70)) return 'vehicle "' + e.id + '" bad speed';
+          if (e.accel != null && !num(e.accel, 4, 40)) return 'vehicle "' + e.id + '" bad accel';
+          if (e.turn != null && !num(e.turn, 0.4, 2.6)) return 'vehicle "' + e.id + '" bad turn';
+          if (e.model != null && !['cybertruck', 'blocky'].includes(e.model)) return 'vehicle "' + e.id + '" bad model';
+          if (e.color != null && !hex(e.color)) return 'vehicle "' + e.id + '" bad color';
+          break;
+        case 'trampoline':                                                                                          // v22
+          if (e.radius != null && !num(e.radius, 2, 9)) return 'trampoline "' + e.id + '" bad radius';
+          if (e.power != null && !num(e.power, 30, 110)) return 'trampoline "' + e.id + '" bad power';
+          if (e.color != null && !hex(e.color)) return 'trampoline "' + e.id + '" bad color';
           break;
         case 'spinner':                                                                                           // v21.1 obby kit
           if (e.speed != null && !num(e.speed, -360, 360)) return 'spinner "' + e.id + '" bad speed';
@@ -3649,7 +3675,9 @@ const WL_PATCHABLE = {
   spawner: ['every', 'max', 'reward', 'night'],
   car: ['speed'],
   mover: ['speed'],
-  lamp: ['intensity'],
+  lamp: ['intensity', 'color', 'range'],   // v22: live light tuning
+  vehicle: ['speed', 'accel'],              // v22
+  trampoline: ['power'],                   // v22
   spinner: ['speed'],     // v21.1: live-retuned in the tick (reads rec.def)
   blink: ['period', 'on']
 };
@@ -3959,7 +3987,11 @@ const GameLogic = {
     if (recipe.economy && typeof recipe.economy === 'object') {
       Wallet.load(recipe.economy, recipe.id);
       this.econSym = Wallet.sym;
-    } else Wallet.unmount();
+      /* v22: the world's saved-progress epoch — bump it in the JSON to
+         reset everyone's buys/claims (see applySnapshot) */
+      this.ep = Math.round(+(recipe.economy.epoch) || 0);
+    } else { Wallet.unmount(); this.ep = 0; }
+    this.epTold = false;
 
     registerWorldItems(recipe);          // §8: custom weapons into ITEM_DEFS
 
@@ -4443,6 +4475,10 @@ const GameLogic = {
   snapshotChunks() {
     const ids = Object.keys(this.state.b);
     const out = [];
+    /* v22: every chunk carries the world's economy.epoch so a peer
+       can tell whether this progress belongs to the same world
+       version (see applySnapshot) */
+    if (this.ep) out.push({ ep: this.ep });
     for (let i = 0; i < ids.length; i += 18) {
       const d = { b: {}, bn: {} };
       for (const id of ids.slice(i, i + 18)) { d.b[id] = 1; if (this.state.bn[id]) d.bn[id] = this.state.bn[id]; }
@@ -4478,11 +4514,26 @@ const GameLogic = {
   applySnapshot(s) {
     if (!s || typeof s !== 'object') return;
     let changed = false;
+    /* v22: economy.epoch — bump the number in a world JSON and every
+       client ignores (and clears, relay-side) progress stored under
+       the old epoch. Peer snapshots carry ep; relay-stored state
+       without one is legacy data from a previous world version. */
+    const ep = this.ep || 0;
+    if (ep) {
+      if (s.ep !== ep) {
+        if (!this.epTold) { this.epTold = true; WS.emit('tyc', { t: 'ep', v: ep }); }
+        return;                                    // stale epoch — start clean
+      }
+    } else if (s.ep !== undefined && s.ep !== 0) return;   // they run a newer world than me — ignore
     /* v16: claims from a stored snapshot whose owner is GONE (they left,
        their client reset the plot, but the relay still remembers) are
        dropped — a claim only counts while its owner is in the room.
-       Runs BEFORE the merge so stale claims never land in state. */
-    if (s.c && typeof s.c === 'object' && MP.connected && MP.remotes.size > 0) {
+       v22 FIX: this used to run only when OTHER players were online,
+       so a solo rejoiner inherited an ORPHANED claim — every pad then
+       said "belongs to a claimed plot" and nothing was buyable. Runs
+       on every snapshot now (MP.id is random per session, so a claim
+       from a previous session is never "yours"). */
+    if (s.c && typeof s.c === 'object' && MP.connected) {
       for (const id in s.c)
         if (this.state.c[id] === undefined && s.c[id] && s.c[id].i !== MP.id && !MP.remotes.has(s.c[id].i)) {
           delete s.c[id];
@@ -5143,24 +5194,47 @@ const GameLogic = {
 };
 
 /* ---------- the entity builders ---------- */
-/* ---- v21 LAMP POOL -------------------------------------------------
+/* ---- v21 LAMP POOL / v22 LIGHTING KIT --------------------------------
    A street of lamp posts wants 20+ point lights, but every light in
    the scene rides in EVERY material's shader — 22 lights would melt
    a phone. So the pool holds a SMALL fixed set of THREE.PointLights
    (created once, always in the scene → constant shader cost) and
    re-aims them at the posts nearest the player a few times a second.
    Intensity rides the day/night cycle: lamps glow at dusk and blaze
-   at midnight, then fade out at dawn. -------------------------------- */
+   at midnight, then fade out at dawn.
+
+   v22 FIX: three.js r155+ renders lights in PHYSICAL units — a
+   PointLight intensity of 2.2 is a birthday candle, which is why the
+   v21 lamps "didn't light up". Pooled lights now carry intensity ×
+   MULT (14) to read like the old renderer did.
+
+   v22: every lamp also gets a VISUAL KIT (emissive bulb + additive
+   glow sprite + pool of light on the ground below), so a whole
+   street of lamps looks lit even beyond the 8 real lights — the
+   sprites cost nothing per frame. -------------------------------- */
 const LAMP = {
   list: [],          // every lamp entity in the world
   lights: null,      // the pooled PointLights (lazy)
-  N: 8,              // pool size — 8 is plenty for a street corner
-  _t: 0,             // re-aim throttle
+  N: 8,              // pool size — 8 real lights is plenty on a phone
+  MULT: 14,          // physical-light compensation (r155 candela units)
+  _t: 0, _night: -1, _tex: null,
+  tex() {            // shared radial-gradient glow texture (built once)
+    if (this._tex) return this._tex;
+    const c = document.createElement('canvas'); c.width = c.height = 64;
+    const g = c.getContext('2d');
+    const gr = g.createRadialGradient(32, 32, 2, 32, 32, 32);
+    gr.addColorStop(0, 'rgba(255,255,255,1)');
+    gr.addColorStop(0.35, 'rgba(255,255,255,0.5)');
+    gr.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+    this._tex = new THREE.CanvasTexture(c);
+    return this._tex;
+  },
   ensure() {
     if (this.lights) return;
     this.lights = [];
     for (let i = 0; i < this.N; i++) {
-      const l = new THREE.PointLight(0xffe9b0, 0, 34, 1.6);
+      const l = new THREE.PointLight(0xffe9b0, 0, 34, 1.5);
       l.castShadow = false;                     // pools of shadows = no
       l.visible = false;
       scene.add(l);
@@ -5168,10 +5242,16 @@ const LAMP = {
     }
   },
   tick(dt, daylight) {
-    if (!this.list.length) { if (this.lights) for (const l of this.lights) l.visible = false; return; }
-    this.ensure();
     /* night amount — lamps come on through dusk, off through dawn */
     const night = clamp(1 - daylight * 1.35, 0, 1);
+    /* the visual kit only re-tints when the night actually changed —
+       a street of 22 lamps then costs ZERO material updates/frame */
+    if (Math.abs(night - this._night) > 0.015) {
+      this._night = night;
+      for (const p of this.list) if (p.setNight) p.setNight(night);
+    }
+    if (!this.list.length) { if (this.lights) for (const l of this.lights) l.visible = false; return; }
+    this.ensure();
     if (night <= 0.02) { for (const l of this.lights) l.visible = false; return; }
     this._t -= dt;
     if (this._t <= 0) {                        // re-aim at the nearest posts
@@ -5184,16 +5264,120 @@ const LAMP = {
       for (let i = 0; i < this.N; i++) {
         const L = this.lights[i];
         if (i < near.length) {
-          const p = near[i].l;
+          const p = near[i].l, def = p.rec ? p.rec.def : null;   // live (patchable)
           L.position.set(p.x, p.y + 1.2, p.z);   // just under the lamp head
-          L.color.setHex(p.color);
-          L.distance = p.range;
-          L.userData.base = p.intensity;
+          L.color.setHex(def && wlIsHex(def.color) ? wlHex(def.color) : p.color);
+          L.distance = def ? wlNum(def.range, 8, 80, p.range) : p.range;
+          L.userData.base = def ? wlNum(def.intensity, 0.1, 4, p.intensity) : p.intensity;
           L.visible = true;
         } else { L.visible = false; L.userData.base = 0; }
       }
     }
-    for (const l of this.lights) l.intensity = (l.userData.base || 0) * night;
+    for (const l of this.lights) l.intensity = (l.userData.base || 0) * night * this.MULT;
+  }
+};
+
+/* ---- v22 NIGHT FX ---------------------------------------------------
+   Anything that should glow after dark registers here (NPC car light
+   bars, vehicles). Driven from updateDayNight, re-tinted only when
+   the night amount actually changes — free the rest of the time. */
+const NightFX = {
+  cars: [],
+  _night: -1,
+  addCar(refs) { this.cars.push(refs); return refs; },
+  setNight(n) {
+    if (Math.abs(n - this._night) < 0.015) return;
+    this._night = n;
+    for (const c of this.cars) if (c.setNight) c.setNight(n);
+  }
+};
+
+/* ---- v22 VEHICLES — the drivable car controller -----------------------
+   A `vehicle` entity registers itself here when built; walk up to one
+   and the "Drive" prompt appears (E / tap). While you drive:
+     - your character rides along (hidden — the dark glass does the
+       storytelling) and your position broadcast follows the car, so
+       every screen sees you + the car move together
+     - the car's pose is broadcast to the room at ~8 Hz ('veh' world
+       events); other screens ease their copy toward it
+     - joystick / WASD steers: fwd/back = throttle, left/right = turn
+   E (or the prompt) hops you out beside the car.
+   Declared BEFORE the GameLogic.load() call site (TDZ — see v20.1). */
+const VEH = {
+  riding: null,
+  enter(rec) {
+    if (this.riding || !rec || !rec.grp) return;
+    this.riding = rec;
+    rec.speed = 0; rec.steer = 0;
+    climbing = false; swimming = false; yeet.ctl = 0;
+    character.visible = false;
+    WS.act('veh', { e: rec.id, x: +rec.px.toFixed(1), y: +rec.py.toFixed(1), z: +rec.pz.toFixed(1), r: +rec.grp.rotation.y.toFixed(2) });
+    wlToast('Driving! Joystick / WASD to steer — E to hop out.');
+  },
+  exit() {
+    const rec = this.riding;
+    if (!rec) return;
+    this.riding = null;
+    character.visible = true;
+    const ry = rec.grp.rotation.y;                       // hop out on the LEFT
+    player.x = rec.px - Math.cos(ry) * 3.2;
+    player.z = rec.pz + Math.sin(ry) * 3.2;
+    player.y = rec.py + 0.15;
+    player.vx = player.vz = 0; player.vy = 9;
+    WS.act('veh', { e: rec.id, v: 0 });                   // released (act = local + others)
+  },
+  driveTick(dt) {
+    const rec = this.riding;
+    if (!rec) return;
+    const def = rec.def;
+    const th = clamp(((keys['w'] || keys['arrowup']) ? 1 : 0) - ((keys['s'] || keys['arrowdown']) ? 1 : 0) + joyFwd, -1, 1);
+    const st = clamp(((keys['d'] || keys['arrowright']) ? 1 : 0) - ((keys['a'] || keys['arrowleft']) ? 1 : 0) + joySide, -1, 1);
+    const spd = wlNum(def.speed, 8, 70, 34), acc = wlNum(def.accel, 4, 40, 16), turn = wlNum(def.turn, 0.4, 2.6, 1.5);
+    /* throttle / brake / coast */
+    rec.speed += th * acc * dt;
+    const braking = th !== 0 && rec.speed !== 0 && Math.sign(th) !== Math.sign(rec.speed);
+    rec.speed *= Math.max(0, 1 - dt * (braking ? 3.6 : (th ? 0.22 : 1.5)));
+    rec.speed = clamp(rec.speed, -spd * 0.4, spd);
+    rec.brake = braking || (th < 0 && rec.speed > 0.5);
+    /* steering — scaled by speed so you can't spin standing still */
+    rec.grp.rotation.y -= st * turn * dt * clamp(Math.abs(rec.speed) / 9, 0, 1) * (rec.speed < 0 ? -1 : 1);
+    /* move + collide (the car's own collider steps aside for the test) */
+    const mv = rec.speed * dt;
+    if (mv) {
+      const fx = Math.sin(rec.grp.rotation.y), fz = Math.cos(rec.grp.rotation.y);
+      const nx = rec.px + fx * mv, nz = rec.pz + fz * mv;
+      rec.col.enabled = false;
+      const blocked = overlapsAny({ x: nx, y: rec.py + 0.95, z: nz, hw: 1.45, h: 1.7 });
+      rec.col.enabled = true;
+      if (blocked) rec.speed *= -0.28;                    // boing — bounce off it
+      else { rec.px = nx; rec.pz = nz; }
+    }
+    /* follow the ground under the wheels (no cliff teleports). The
+       car's OWN collider steps aside for the query — otherwise it
+       finds its own roof and climbs 2.2 studs a frame into the sky. */
+    rec.col.enabled = false;
+    const g = World.groundAt(rec.px, rec.pz, rec.py + 2.4);
+    rec.col.enabled = true;
+    if (g > -Infinity && Math.abs(g - rec.py) < 4) rec.py = g;
+    rec.grp.position.set(rec.px, rec.py, rec.pz);
+    /* the collider follows (worst-case footprint for the rotation) */
+    rec.col.min.x = rec.px - 2.1; rec.col.max.x = rec.px + 2.1;
+    rec.col.min.y = rec.py;        rec.col.max.y = rec.py + 2.2;
+    rec.col.min.z = rec.pz - 3.3;  rec.col.max.z = rec.pz + 3.3;
+    /* wheels */
+    for (const w of rec.spinW) w.rotation.x += (rec.speed / 0.85) * dt;
+    rec.steer += (st * 0.42 - rec.steer) * Math.min(1, dt * 10);
+    for (const p of rec.frontPiv) p.rotation.y = rec.steer;
+    /* the player rides along — position broadcast + camera follow it */
+    player.x = rec.px; player.y = rec.py + 1.1; player.z = rec.pz;
+    player.vx = player.vy = player.vz = 0;
+    player.grounded = true;
+    /* pose sync to the room at ~8 Hz */
+    rec.netT -= dt;
+    if (rec.netT <= 0) {
+      rec.netT = 0.12;
+      WS.emit('veh', { e: rec.id, x: +rec.px.toFixed(1), y: +rec.py.toFixed(1), z: +rec.pz.toFixed(1), r: +rec.grp.rotation.y.toFixed(2) });
+    }
   }
 };
 
@@ -6455,6 +6639,24 @@ const WL_BUILDERS = {
     part(0.6, 0.3, 0.12, headM, -0.95, 1.2, 3.32, grp);
     part(0.6, 0.28, 0.12, tailM, 0.95, 1.25, -3.32, grp);          // taillights
     part(0.6, 0.28, 0.12, tailM, -0.95, 1.25, -3.32, grp);
+    /* v22: tiny additive glows at the four lamps — the whole traffic
+       system reads as lit at night without a single real light */
+    const carGlows = [];
+    for (const [gx, gy2, gz, gc, gr] of [[0.95, 1.2, 3.45, 0xfff2c0, 1.1], [-0.95, 1.2, 3.45, 0xfff2c0, 1.1],
+                                          [0.95, 1.25, -3.45, 0xff3b2d, 0.9], [-0.95, 1.25, -3.45, 0xff3b2d, 0.9]]) {
+      const gm = new THREE.SpriteMaterial({ map: LAMP.tex(), color: gc, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+      const sp = new THREE.Sprite(gm);
+      sp.position.set(gx, gy2, gz);
+      sp.scale.setScalar(gr * 2);
+      grp.add(sp); carGlows.push(gm);
+    }
+    const fxRef = NightFX.addCar({
+      setNight(n) {
+        headM.emissiveIntensity = 1.2 + n * 2.6;
+        tailM.emissiveIntensity = 1.0 + n * 2.2;
+        for (const gm of carGlows) gm.opacity = n * 0.8;
+      }
+    });
     const wheelG = new THREE.CylinderGeometry(0.62, 0.62, 0.44, 12);
     const wheelM = mat(0x1c1c1f, 0.9), hubG = new THREE.CylinderGeometry(0.3, 0.3, 0.48, 8);
     const hubM = mat(0xb9c2cc, 0.35, 0.85);
@@ -6500,9 +6702,14 @@ const WL_BUILDERS = {
         const hl = Math.hypot(b.x - a.x, b.z - a.z) || 1;
         const vx = (b.x - a.x) / hl, vz = (b.z - a.z) / hl;   // the car's travel direction
         const yeet = clamp(+V.carYeet || 45, 5, 150);          // v21: room-rule yeet power
-        player.vx += vx * (12 + yeet * (spd / 15));           // thrown down the road
-        player.vz += vz * (12 + yeet * (spd / 15));
-        player.vy = Math.max(player.vy, 20 + yeet * 0.9);       // and UP
+        /* v22: the shove is mostly DOWN THE ROAD now (the way the car
+           was going) — and startYeet steals control until you land,
+           so the fling actually carries instead of dying to the
+           joystick the very next frame */
+        const shove = 16 + yeet * clamp(spd / 15, 0.6, 1.5);   // faster cars fling harder
+        player.vx += vx * shove;                              // thrown down the road
+        player.vz += vz * shove;
+        player.vy = Math.max(player.vy, 16 + yeet * 0.5);       // and UP (but mostly forward)
         climbing = false;
         startYeet(90 + yeet);                                  // full Roblox fling, spinning
         hurtPlayer(clamp(+V.carDamage || dmg, 1, 200));       // v21: room-rule damage
@@ -6510,7 +6717,11 @@ const WL_BUILDERS = {
       }
     };
     rec.setGate = ok => { grp.visible = ok; };
-    rec.dispose = () => { scene.remove(grp); };
+    rec.dispose = () => {
+      scene.remove(grp);
+      const i = NightFX.cars.indexOf(fxRef);   // v22: drop the night kit too
+      if (i >= 0) NightFX.cars.splice(i, 1);
+    };
   },
 
   /* MOVING PLATFORM — v21 obby classic. Glides from its spawn to
@@ -6578,24 +6789,262 @@ const WL_BUILDERS = {
     rec.dispose = () => { scene.remove(grp); colRef.enabled = false; };
   },
 
-  /* STREET LAMP — v21: a light SOURCE, not a mesh (the posts + heads
-     are ordinary build parts). Registers into the LAMP list; the
-     LAMP POOL keeps a small fixed set of PointLights in the scene
-     (constant shader cost) and re-aims them at the nearest posts a
-     few times a second, so a street of 22 lamps costs 8 lights. */
+  /* STREET LAMP — v22 LIGHTING KIT: a light source you can drop
+     ANYWHERE. Registers into the LAMP list (nearest 8 get real
+     pooled PointLights) AND builds its own always-on visuals: an
+     emissive bulb, a soft additive glow sprite, and a pool of light
+     on the ground below (finds the ground itself). All JSON-tuned:
+     color, intensity (0.1-4), range (8-80), radius (glow size 1-8),
+     pool (0-1), headSize — and admin patches retune it live. */
   lamp(rec, e, x, y, z) {
     rec.kind = 'lamp';
-    const lamp = {
-      x, y, z,
-      color: wlIsHex(e.color) ? wlHex(e.color) : 0xffe9b0,
-      intensity: wlNum(e.intensity, 0.1, 4, 2.2),
-      range: wlNum(e.range, 8, 80, 34)
-    };
+    const baseCol = wlIsHex(e.color) ? wlHex(e.color) : 0xffe9b0;
+    const grp = new THREE.Group();
+    grp.position.set(x, y, z);
+    scene.add(grp);
+    /* the bulb — emissive sphere riding the night */
+    const bulbM = new THREE.MeshStandardMaterial({ color: 0xf3f0e2, roughness: 0.4, emissive: baseCol, emissiveIntensity: 0.15 });
+    const bulb = new THREE.Mesh(new THREE.SphereGeometry(wlNum(e.headSize, 0.25, 1.5, 0.5), 10, 8), bulbM);
+    grp.add(bulb);
+    /* additive glow sprite around the bulb */
+    const glowM = new THREE.SpriteMaterial({ map: LAMP.tex(), color: baseCol, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+    const glow = new THREE.Sprite(glowM);
+    grp.add(glow);
+    /* the pool of light on the ground below */
+    let pool = null, poolM = null;
+    const gy = World.groundAt(x, z, y + 1);
+    if (gy > -Infinity) {
+      poolM = new THREE.MeshBasicMaterial({ map: LAMP.tex(), color: baseCol, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+      pool = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), poolM);
+      pool.rotation.x = -Math.PI / 2;
+      pool.position.set(0, gy - y + 0.07, 0);
+      grp.add(pool);
+    }
+    const lamp = { x, y, z, color: baseCol, intensity: wlNum(e.intensity, 0.1, 4, 2.2), range: wlNum(e.range, 8, 80, 34), rec, setNight(n) {
+      /* live-reads its own def — patches retune the lamp in place */
+      const d = rec.def;
+      const col = wlIsHex(d.color) ? wlHex(d.color) : baseCol;
+      const rad = wlNum(d.radius, 1, 8, 3.4) * 2;
+      bulbM.emissiveIntensity = 0.15 + n * 2.6;
+      glowM.opacity = n * 0.85;
+      glowM.color.setHex(col);
+      glow.scale.set(rad, rad, 1);
+      if (poolM) {
+        const pr = wlNum(d.range, 8, 80, 34) * 0.3;
+        poolM.opacity = n * wlNum(d.pool, 0, 1, 0.5);
+        poolM.color.setHex(col);
+        pool.scale.set(pr * 2, pr * 1.4, 1);
+      }
+    } };
     LAMP.list.push(lamp);
+    rec.grp = grp;
     rec.dispose = () => {
       const i = LAMP.list.indexOf(lamp);
       if (i >= 0) LAMP.list.splice(i, 1);
+      scene.remove(grp);
     };
+  },
+
+  /* DRIVABLE VEHICLE — v22: the finale ride. Park it anywhere (the
+     obby's lot, a driveway, a showroom). Walk up → "Drive" → E hops
+     in: joystick / WASD steers, the camera follows, E hops out. The
+     car is a REAL collider (players get gently shoved), follows the
+     ground, bounces off walls, and syncs its pose over the relay
+     (~8 Hz 'veh' events) so every screen sees the same joyride.
+     model:'cybertruck' (default) = the stainless wedge with a real
+     headlight SpotLight + red taillight bar at night. */
+  vehicle(rec, e, x, y, z) {
+    rec.kind = 'vehicle';
+    const grp = new THREE.Group();
+    rec.px = x; rec.py = y; rec.pz = z;
+    grp.position.set(x, y, z);
+    grp.rotation.y = wlQuarter(e.rot) * Math.PI / 2;
+    scene.add(grp);
+    rec.grp = grp;
+    rec.speed = 0; rec.steer = 0; rec.netT = 0; rec.net = null; rec.driver = null; rec.brake = false;
+    const steel = wlIsHex(e.color) ? wlHex(e.color) : 0xb9bec6;
+    const steelM = new THREE.MeshStandardMaterial({ color: steel, roughness: 0.34, metalness: 0.82, envMapIntensity: 0.9 });
+    const darkM = mat(0x171a1f, 0.6, 0.3);
+    rec.frontPiv = []; rec.spinW = [];
+    if (e.model === 'blocky') {
+      part(3.0, 1.0, 6.6, steelM, 0, 1.15, 0, grp);
+      part(3.1, 0.3, 6.8, darkM, 0, 0.62, 0, grp);
+      part(2.7, 0.9, 3.2, steelM, 0, 2.05, -0.25, grp);
+      const glassM = new THREE.MeshStandardMaterial({ color: 0x9fd8ff, roughness: 0.08, metalness: 0.2, transparent: true, opacity: 0.5 });
+      part(2.55, 0.62, 0.06, glassM, 0, 2.12, 1.36, grp);
+      part(0.06, 0.55, 2.5, glassM, 1.38, 2.12, -0.25, grp);
+      part(0.06, 0.55, 2.5, glassM, -1.38, 2.12, -0.25, grp);
+    } else {
+      /* the CYBERTRUCK: one angular stainless wedge + a dark glass
+         canopy. The side profile is a THREE.Shape (x = forward,
+         y = height) extruded across the width, then turned to face +z */
+      const sh = new THREE.Shape();
+      sh.moveTo(2.9, 0.72); sh.lineTo(1.25, 0.86);       // nose (low, flat)
+      sh.lineTo(-0.35, 2.28);                            // the roof peak
+      sh.lineTo(-2.62, 2.14);                            // rear top (bed rail)
+      sh.lineTo(-2.9, 0.78);                             // tail
+      sh.closePath();
+      const bodyG = new THREE.ExtrudeGeometry(sh, { depth: 2.34, bevelEnabled: true, bevelThickness: 0.05, bevelSize: 0.05, bevelSegments: 1 });
+      bodyG.translate(0, 0, -1.17);
+      const body = new THREE.Mesh(bodyG, steelM);
+      body.rotation.y = -Math.PI / 2;                    // shape +x → car forward
+      body.castShadow = body.receiveShadow = true;
+      grp.add(body);
+      const gs = new THREE.Shape();
+      gs.moveTo(1.15, 0.98); gs.lineTo(-0.3, 2.06); gs.lineTo(-2.55, 1.95); gs.lineTo(-2.55, 1.0);
+      gs.closePath();
+      const glassG = new THREE.ExtrudeGeometry(gs, { depth: 2.16, bevelEnabled: false });
+      glassG.translate(0, 0, -1.08);
+      const glass = new THREE.Mesh(glassG, new THREE.MeshStandardMaterial({ color: 0x0d1319, roughness: 0.16, metalness: 0.45, envMapIntensity: 1.1 }));
+      glass.rotation.y = -Math.PI / 2;
+      grp.add(glass);
+      part(2.3, 0.14, 0.5, darkM, 0, 0.72, 2.55, grp);   // front bumper lip
+      part(2.3, 0.14, 0.5, darkM, 0, 0.78, -2.6, grp);   // rear bumper lip
+    }
+    /* LED light bars — head (white) + tail (red) */
+    const headM = new THREE.MeshStandardMaterial({ color: 0xf6f9ff, emissive: 0xeef4ff, emissiveIntensity: 1.2 });
+    const tailM = new THREE.MeshStandardMaterial({ color: 0x8a1410, emissive: 0xff2416, emissiveIntensity: 1.0 });
+    part(2.14, 0.15, 0.1, headM, 0, e.model === 'blocky' ? 1.2 : 1.02, e.model === 'blocky' ? 3.32 : 2.83, grp);
+    part(2.14, 0.16, 0.1, tailM, 0, e.model === 'blocky' ? 1.25 : 1.55, e.model === 'blocky' ? -3.32 : -2.84, grp);
+    const headGlow = new THREE.SpriteMaterial({ map: LAMP.tex(), color: 0xdfeaff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+    const hg = new THREE.Sprite(headGlow); hg.scale.setScalar(4.4); hg.position.set(0, 1.05, 2.9); grp.add(hg);
+    const tailGlow = new THREE.SpriteMaterial({ map: LAMP.tex(), color: 0xff2a1c, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+    const tg = new THREE.Sprite(tailGlow); tg.scale.setScalar(3.4); tg.position.set(0, 1.55, -2.95); grp.add(tg);
+    /* ONE real headlight (a driven car earns a real light) */
+    const headL = new THREE.SpotLight(0xe8f1ff, 0, 58, 0.52, 0.45, 1.2);
+    headL.position.set(0, 1.25, 2.7);
+    headL.target.position.set(0, 0.25, 20);
+    grp.add(headL); grp.add(headL.target);
+    /* wheels — front pair steers */
+    const wheelG = new THREE.CylinderGeometry(0.85, 0.85, 0.6, 14);
+    const wheelM = mat(0x15171b, 0.92), hubG = new THREE.CylinderGeometry(0.42, 0.42, 0.64, 8);
+    const hubM = mat(0x9aa3ad, 0.35, 0.85);
+    for (const sx of [-1.28, 1.28]) for (const sz of [1.72, -1.86]) {
+      const piv = new THREE.Group();
+      piv.position.set(sx, 0.85, sz);
+      const wh = new THREE.Mesh(wheelG, wheelM);
+      wh.rotation.z = Math.PI / 2;
+      wh.castShadow = true;
+      wh.add(new THREE.Mesh(hubG, hubM).rotateZ(Math.PI / 2));
+      piv.add(wh);
+      grp.add(piv);
+      rec.spinW.push(wh);
+      if (sz > 0) rec.frontPiv.push(piv);
+    }
+    /* the collider (mover pattern — a box that follows the car) */
+    rec.col = World.addBox(x, y + 1.1, z, 4.2, 2.2, 6.6);
+    /* the night kit */
+    const fxRef = NightFX.addCar({
+      setNight(n) {
+        headL.intensity = n * 340;                       // physical (candela) — a real beam
+        headM.emissiveIntensity = 0.9 + n * 3.0;
+        headGlow.opacity = n * 0.75;
+        tailGlow.opacity = n * (rec.brake ? 0.95 : 0.55);
+        tailM.emissiveIntensity = (0.8 + n * 2.0) * (rec.brake ? 2.1 : 1);
+      }
+    });
+    /* the Drive prompt */
+    rec.inter = addInteractable({
+      x, y: y + 1.4, z, radius: 7,
+      label: () => 'Drive the Cybertruck',
+      enabled: () => !VEH.riding,
+      action: () => VEH.enter(rec)
+    });
+    rec.hitCd = 0;
+    rec.tick = dt => {
+      /* remote driver? ease toward their broadcast pose (never while I drive it) */
+      if (rec.net && elapsed - rec.net.t < 3 && VEH.riding !== rec) {
+        const k = Math.min(1, dt * 7);
+        rec.px += (rec.net.x - rec.px) * k;
+        rec.py += (rec.net.y - rec.py) * k;
+        rec.pz += (rec.net.z - rec.pz) * k;
+        rec.grp.rotation.y += angWrap(rec.net.r - rec.grp.rotation.y) * k;
+        rec.grp.position.set(rec.px, rec.py, rec.pz);
+        rec.col.min.x = rec.px - 2.1; rec.col.max.x = rec.px + 2.1;
+        rec.col.min.y = rec.py;        rec.col.max.y = rec.py + 2.2;
+        rec.col.min.z = rec.pz - 3.3;  rec.col.max.z = rec.pz + 3.3;
+        for (const w of rec.spinW) w.rotation.x += dt * 8;
+      }
+      /* brake light refresh (NightFX re-tints on night change only) */
+      if (rec.brakeT == null) rec.brakeT = 0;
+      rec.brakeT -= dt;
+      if (rec.brakeT <= 0) { rec.brakeT = 0.3; fxRef.setNight(NightFX._night); }
+      /* did the car clip ME while someone else drives? gentle shove */
+      if (rec.hitCd > 0) rec.hitCd -= dt;
+      else if (rec.net && VEH.riding !== rec) {
+        const dx = player.x - rec.px, dz = player.z - rec.pz;
+        if (dx * dx + dz * dz < 11 && player.y < rec.py + 3.4 && player.y + player.h > rec.py) {
+          rec.hitCd = 1.2;
+          const hl = Math.hypot(dx, dz) || 1;
+          player.vx += dx / hl * 26; player.vz += dz / hl * 26;
+          player.vy = Math.max(player.vy, 22);
+          climbing = false;
+          startYeet(60);
+          wlToast('Move! Car coming through!', true);
+        }
+      }
+    };
+    rec.dispose = () => {
+      scene.remove(grp);
+      rec.col.enabled = false;
+      const i = NightFX.cars.indexOf(fxRef);
+      if (i >= 0) NightFX.cars.splice(i, 1);
+      const ii = Interactables.indexOf(rec.inter);
+      if (ii >= 0) Interactables.splice(ii, 1);
+      if (VEH.riding === rec) { VEH.riding = null; character.visible = true; }   // world switch mid-ride
+    };
+  },
+
+  /* TRAMPOLINE — v22: the neighborhood bounce pad. A real bed you can
+     stand on (mover-style collider) that LAUNCHES anyone whose feet
+     touch it — walk across it and you still get a boing. power is
+     the launch velocity (30-110); the ring flashes and the bed
+     squashes on every bounce. */
+  trampoline(rec, e, x, y, z) {
+    rec.kind = 'trampoline';
+    const R = wlNum(e.radius, 2, 9, 4.6);
+    const power = wlNum(e.power, 30, 110, 64);
+    const grp = new THREE.Group();
+    grp.position.set(x, y, z);
+    scene.add(grp);
+    rec.grp = grp;
+    const legM = mat(0x2b3138, 0.6);
+    for (let i = 0; i < 4; i++) {
+      const a = i * Math.PI / 2 + Math.PI / 4;
+      part(0.42, 1.15, 0.42, legM, Math.cos(a) * R * 0.6, -0.62, Math.sin(a) * R * 0.6, grp);
+    }
+    const col = wlIsHex(e.color) ? wlHex(e.color) : 0x2f6fb3;
+    const ringM = new THREE.MeshStandardMaterial({ color: col, roughness: 0.5, emissive: col, emissiveIntensity: 0.25 });
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(R, 0.44, 10, 28), ringM);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = 0.02;
+    ring.castShadow = true;
+    grp.add(ring);
+    const bed = new THREE.Mesh(new THREE.CylinderGeometry(R - 0.38, R - 0.38, 0.24, 26), mat(0x14161a, 0.85));
+    bed.position.y = 0.02;
+    bed.castShadow = bed.receiveShadow = true;
+    grp.add(bed);
+    const colRef = World.addBox(x, y + 0.16, z, R * 2, 0.4, R * 2);   // stand on it
+    rec.squash = 0;
+    rec.tick = dt => {
+      if (rec.squash > 0) {
+        rec.squash -= dt;
+        const k = Math.max(0, rec.squash / 0.18);
+        bed.scale.set(1 + k * 0.08, 1 - k * 0.6, 1 + k * 0.08);
+        if (rec.squash <= 0) bed.scale.set(1, 1, 1);
+        ringM.emissiveIntensity = 0.25 + k * 1.6;
+      }
+      /* feet on the bed → LAUNCH */
+      const dx = player.x - x, dz = player.z - z;
+      if (dx * dx + dz * dz < (R + 0.35) * (R + 0.35) &&
+          player.y > y - 0.3 && player.y < y + 1.25 && player.vy <= 0.01) {
+        player.vy = power;
+        player.grounded = false;
+        rec.squash = 0.18;
+      }
+    };
+    rec.setGate = ok => { grp.visible = ok; colRef.enabled = ok; };
+    rec.dispose = () => { scene.remove(grp); colRef.enabled = false; };
   },
 
   /* SPINNER — v21.1 obby kit. The classic windmill: one bar (or a
@@ -7006,6 +7455,16 @@ WS.on('snet', (d, from) => {
   const list = GameLogic.script.net[d.k];
   if (!list) return;
   for (const fn of list) { try { fn(d.d, from); } catch (e) { console.error('[world net]', e); } }
+});
+/* v22: vehicle pose sync — the driver broadcasts ~8 Hz, every other
+   screen eases its copy of the car toward the latest pose */
+WS.on('veh', (d, from) => {
+  if (!GameLogic.active || !d || typeof d.e !== 'string') return;
+  const rec = GameLogic.byId && GameLogic.byId.get(d.e);
+  if (!rec || rec.kind !== 'vehicle') return;
+  if (d.v === 0) { rec.net = null; rec.driver = null; return; }   // released
+  rec.driver = String(from);
+  rec.net = { x: +d.x || 0, y: +d.y || 0, z: +d.z || 0, r: +d.r || 0, t: elapsed };
 });
 };
 
@@ -7956,11 +8415,16 @@ let FALL_SAFE_H = 8, FALL_MULT = 10;   /* live-synced from V (§1.5) */
    copy of you the same way. startYeet(spin) takes a yeet POWER —
    anything under 16 is a mere shove and doesn't tumble.
 ================================================================ */
-const yeet = { a: 0, r: 0, rx: 0, rz: 0, on: false };   // a/r = live angles, rx/rz = rates
+const yeet = { a: 0, r: 0, rx: 0, rz: 0, on: false, ctl: 0 };   // a/r = live angles, rx/rz = rates; ctl = seconds of stolen control
 function startYeet(spin) {
   const s = clamp(+spin || 0, 0, 400);
   if (s < 16) return;                       // a shove, not a yeet
   yeet.on = true;
+  /* v22: a real yeet STEALS CONTROL until you land — the v20/21 code
+     kept letting the joystick overwrite player.vx/vz every frame, so
+     a car hit while you were holding a direction died instantly and
+     the fling never read as directional. Hucked = no steering. */
+  yeet.ctl = Math.max(yeet.ctl, clamp(s / 55, 0.5, 2.6));
   yeet.rx = clamp(s * 0.17, 5, 30) * (0.75 + Math.random() * 0.5);   // ~1 rev / 0.4s at full power
   yeet.rz = clamp(s * 0.10, 3, 20) * (0.5 + Math.random());
   if (Math.random() < 0.5) yeet.rz = -yeet.rz;
@@ -8013,6 +8477,7 @@ function hurtPlayer(dmg, kbx = 0, kbz = 0, spin = 0) {
   if (health <= 0) { health = 0; respawn(); }
 }
 function respawn() {
+  if (VEH.riding) VEH.exit();                                       // v22: no god-seat — dying ejects you from the car
   const a = Math.random() * Math.PI * 2, r = 2 + Math.random() * 4;   // spawn ring —
   const cp = (GameLogic.active && GameLogic.checkpoint) || null;        // v14: last checkpoint wins
   player.x = (cp ? cp.x : WORLDS_SPAWN.x) + Math.sin(a) * r;            // players never stack in multiplayer
@@ -8063,6 +8528,17 @@ function updateMovement(dt) {
   const len = tmpV.length();
   if (len > 1) tmpV.divideScalar(len);
   const moving = len > 0.12;
+
+  /* v22: driving a vehicle — the car IS the movement (the loop's
+     camera / broadcast / entity ticks keep running after us) */
+  if (VEH.riding) {
+    VEH.driveTick(dt);
+    yaw = VEH.riding.grp.rotation.y;                     // face the way the car faces
+    character.rotation.y = yaw;
+    character.position.set(player.x, player.y, player.z);
+    setAnim('idle', 0.2);
+    return;
+  }
 
   /* seated: a ride seat (seatCtl from §10.5) or the scripted chair.
      Rides read the intent above (the swing uses it as pump input). */
@@ -8225,8 +8701,15 @@ function updateMovement(dt) {
   swimTilt += ((swimming ? swimMv * 1.25 : 0) - swimTilt) * Math.min(1, dt * 6);
 
   if (!climbing && !swimming) {
-    /* normal locomotion */
-    if (moving) {
+    /* v22: while a yeet has stolen control you CANNOT steer — the fling
+       carries you (car hits, smites, explosions). Control returns the
+       instant you land, which is exactly how a Roblox fling feels. */
+    const hucked = yeet.ctl > 0 && !player.grounded;
+    if (yeet.ctl > 0) { if (player.grounded) yeet.ctl = 0; else yeet.ctl -= dt; }
+    if (hucked) {
+      player.vx *= Math.max(0, 1 - dt * 0.35);   // gentle air drag — the arc decays, it doesn't die
+      player.vz *= Math.max(0, 1 - dt * 0.35);
+    } else if (moving) {
       const heading = Math.atan2(tmpV.x, tmpV.z);
       yaw += angWrap(heading - yaw) * Math.min(1, dt * 12);
       const target = (run ? V.runSpeed : V.walkSpeed) * mySpd * Math.min(1, len) * mySzScale() * GameLogic.speedMult();   // room rule × my multiplier × size × world buff (§9.7)
@@ -8238,7 +8721,7 @@ function updateMovement(dt) {
       player.vx *= Math.max(0, 1 - dt * 14);
       player.vz *= Math.max(0, 1 - dt * 14);
     }
-    if ((keys[' '] || touchJump) && player.grounded) player.vy = JUMPV * myJmp * (mySzScale() ? Math.sqrt(myScale) : 1) * GameLogic.jumpMult();   // my multiplier × size × world jump buff (§9.7)
+    if (!hucked && (keys[' '] || touchJump) && player.grounded) player.vy = JUMPV * myJmp * (mySzScale() ? Math.sqrt(myScale) : 1) * GameLogic.jumpMult();   // my multiplier × size × world jump buff (§9.7)
     player.vy -= GRAV * dt;
     if (player.vy < -120) player.vy = -120;
   }
@@ -8356,6 +8839,7 @@ addEventListener('keydown', e => {
   if (k === '/') { e.preventDefault(); chatInput.focus(); }
   if (k === 'e') {                    // v14: NPC dialogue eats E while open
     if (GameLogic.dlgOpen) GameLogic.dlgNext();
+    else if (VEH.riding) VEH.exit();   // v22: hop out of the car
     else if (currentInteract) currentInteract.action();
   }
   if (k === 'r' && !e.repeat) startReload();   // v14: reload the gun in hand
@@ -8644,6 +9128,8 @@ function onPlayerLeft(id) {
   if (SWING && SWING.occupant === id) SWING.occupant = null;
   if (MGR) for (const s of MGR.seats) if (s.occupant === id) s.occupant = null;
   if (CHAIR && CHAIR.occ === id) CHAIR.occ = null;
+  for (const rec of GameLogic.entities)   // v22: park their car where it stands
+    if (rec.kind === 'vehicle' && rec.driver === id) { rec.driver = null; rec.net = null; }
   for (const z of zombies)
     if (z.owner === id && !z.dead) {
       if (worldLeader() === MP.id) { z.owner = MP.id; z.ghost = false; z.hp = Math.max(1, z.hp); }
@@ -8784,12 +9270,17 @@ WS.on('smite', (d, from) => {
   spawnLightning(x, y, z);
   spawnExplosionFX(x, y + 1.2, z, sz);
   if (d.id === MP.id) {                            // the bolt found ME
-    const a = Math.random() * Math.PI * 2;         // yeet: random direction, HARD
-    player.vx += Math.cos(a) * pw * 0.95;
-    player.vz += Math.sin(a) * pw * 0.95;
+    /* v22: fly AWAY from where the bolt landed. A dead-center hit
+       (you stood still) picks a random compass — but a bolt that
+       lands while you're mid-strafe hurls you along your escape
+       vector, so WHERE it hit you decides WHERE you fly. */
+    let dx = player.x - x, dz = player.z - z, hl = Math.hypot(dx, dz);
+    if (hl < 0.9) { const a = Math.random() * Math.PI * 2; dx = Math.cos(a); dz = Math.sin(a); hl = 1; }
+    player.vx += dx / hl * pw * 0.95;
+    player.vz += dz / hl * pw * 0.95;
     player.vy = Math.max(player.vy, pw * 1.05);
     climbing = false;
-    startYeet(pw * 1.15);                          // v20: hucked, spinning — Roblox fling
+    startYeet(pw * 1.15);                          // v20: hucked, spinning — Roblox fling (v22: control stolen)
     if (dm > 0) hurtPlayer(dm);                    // god mode still gets the ride
     adminBanner(self ? 'You smote yourself.' : 'Smitten by ' + (MP.remotes.get(from) || { name: 'an admin' }).name);
   } else if (sp) {                                 // splash: am I close enough?
@@ -10635,6 +11126,7 @@ function updateDayNight(dt) {
   fpSun.intensity = Math.max(0.3, sun.intensity * 0.85);
   fpHemi.intensity = hemi.intensity;
   LAMP.tick(dt, dl);   // v21: street lamps fade in with the night
+  NightFX.setNight(clamp(1 - dl * 1.35, 0, 1));   // v22: car + vehicle glow kits
 }
 
 /* ---- PERF: freeze the local matrices of every static mesh ----
