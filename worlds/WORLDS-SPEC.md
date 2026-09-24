@@ -754,16 +754,22 @@ it is with zero network traffic. Anyone standing on it rides along.
 `phase` (seconds) staggers multiple movers on the same span. The obby
 classic: crossing lava, timing gaps, climbing shafts.
 
-### 7.28 `lamp` — the street lamp (v21)
+### 7.28 `lamp` — the street lamp (v21, upgraded v22)
 ```json
 { "id": "lamp-s3", "type": "lamp", "pos": [-90, 24.7, -44],
-  "color": "#ffe9b0", "intensity": 2.2, "range": 34 }
+  "color": "#ffe9b0", "intensity": 2.2, "range": 34,
+  "radius": 3.4, "pool": 0.5, "headSize": 0.5 }
 ```
 A LIGHT SOURCE, not a mesh — pair it with ordinary `build[]` posts
-and neon heads. The client keeps a fixed pool of 8 point lights and
-re-aims them at the posts nearest the player, so a whole street costs
-8 lights. Intensity rides the day/night cycle: lamps come on at dusk,
-blaze at midnight, fade at dawn.
+and neon heads. v22 LIGHTING KIT: every lamp builds its own emissive
+bulb, additive glow sprite and a pool of light on the ground below
+(it finds the ground itself), and the nearest 8 lamps also get REAL
+pooled point lights — so a whole street reads as lit at night for the
+cost of 8 lights. Intensity rides the day/night cycle (on at dusk,
+blaze at midnight, off at dawn). New knobs: `radius` (1–8, glow size,
+default 3.4), `pool` (0–1, ground-light strength, default 0.5),
+`headSize` (0.25–1.5, bulb size). Admin patches retune `intensity`,
+`color`, `range` live.
 
 ### 7.29 NPC traffic rules (v21)
 `carSpeed` (0.25–2.5, ×traffic), `carYeet` (5–150) and `carDamage`
@@ -771,16 +777,21 @@ blaze at midnight, fade at dawn.
 admin sliders in the Rules tab. A car clip yeets with `carYeet` power
 (spinning Roblox fling) and deals `carDamage`.
 
-### 7.30 The worlds (v21)
+### 7.30 The worlds (v22)
 * **baseplate** — the built-in template fallback.
 * **island-world** — a terrain place to build on.
 * **gold-rush-tycoon** — plots, droppers, raids. v21: every weapon is
   its OWN case — claim a plot and all 8 weapon pads (sword → storm
   pet) are visible with the weapon spinning inside; buy them one by
-  one, re-equip free forever (`reclaim`).
+  one, re-equip free forever (`reclaim`). v22: cases spread out and
+  `economy.epoch: 22` (see §7.36 — bumping it resets everyone's saved
+  buys/claims; claims also now only count while their owner is
+  actually in the room).
 * **neighborhood-world** — the suburb. v21: 22 street lamps that
   light up at night, NPC traffic yeets on contact (tunable rules).
-* **obby-world** — Rainbow Rush: see §7.33.
+  v22: two trampolines in the park (§7.35), NPC cars glow at night
+  (headlight + taillight sprites, no real lights).
+* **obby-world** — Rainbow Rush v3: see §7.33.
 
 ### 7.31 `spinner` — the rotating hazard bar (v21.1 obby kit)
 ```json
@@ -815,17 +826,62 @@ clock, no sync). Re-appearing under a player pops them ON TOP
 instead of trapping them; the last moments before a vanish pulse a
 warning glow. Admin-patchable: `period`, `on` (both live).
 
-### 7.33 obby-world — Rainbow Rush (v21.1)
-A BIG colorful classic obby, 100% data-driven from its JSON (449
-build parts + 83 entities, ~52 KB): 10 themed stages — rainbow
-steps, beam walk with spinners, lava hopscotch, a spinner gauntlet,
-a phased blink bridge, mover rides over lava (incl. a vertical
-lift), a conveyor speed-run with bonk rotors, launch-pad chains, a
-tower spiral with blink steps, a two-rotor finale dance floor and a
-party island with the golden crown + a telepad home. 10
-checkpoints — fall off (kill floor at y −30 under everything) and
-you respawn at the last one. Regenerate it with
-`scripts/gen_oby.py` or author a whole new one per §8.
+### 7.33 obby-world — Rainbow Rush v3 (v22)
+REDESIGNED to be SIMPLE and EASY (the v21.1 version was too hard
+and parts clipped): 139 build parts + 60 entities, ~19 KB, 8 easy
+stages — rainbow steps with safety rails, a wide beam walk with one
+slow spinner, a TRAMPOLINE alley (steer while airborne!), a
+forgiving blink bridge, two slow movers over lava, an easy spinner
+gauntlet with a rideable bonk rotor, a launch-pad finale — and then
+THE PARKING LOT: a huge striped lot with lamp posts, an attendant
+booth, TWO drivable cars (the stainless CYBERTRUCK + a blocky
+runabout — §7.34) and a telepad home. 8 checkpoints; the kill floor
+at y −30 runs under everything. Regenerate with
+`scripts/gen_oby3.py` or author a new one per §8.
+
+### 7.34 `vehicle` — the drivable car (v22)
+```json
+{ "id": "cybertruck", "type": "vehicle", "pos": [0, 16.2, 500],
+  "rot": 0, "model": "cybertruck", "speed": 42, "accel": 20,
+  "turn": 1.7, "color": "#c3c8cf" }
+```
+A car the players DRIVE. Walk up → the `Drive` prompt (E or tap) →
+joystick / WASD steers (fwd/back = throttle, left/right = steer),
+E hops out beside the car. `model` is `cybertruck` (the angular
+stainless wedge, default) or `blocky`. Tuning: `speed` (8–70,
+top speed studs/s), `accel` (4–40), `turn` (0.4–2.6 rad/s at full
+lock, scales with speed). The car is a REAL collider (walking
+players get shoved), follows the ground, and bounces off walls.
+At night it earns a REAL headlight spotlight plus white/red glow
+bars — taillights flash when braking. Multiplayer: the driver
+broadcasts the car's pose at ~8 Hz (`veh` world events — no worker
+changes needed); other screens ease their copy toward it. Admin
+patches retune `speed` / `accel` live.
+
+### 7.35 `trampoline` — the bounce pad (v22)
+```json
+{ "id": "park-tramp-big", "type": "trampoline",
+  "pos": [20, 12.5, -5], "radius": 5, "power": 70, "color": "2f6fb3" }
+```
+A round trampoline with legs and a colorful ring. The bed is a real
+collider you can stand on — but anyone whose feet touch it while
+falling (or standing) gets LAUNCHED with `power` velocity (30–110,
+default 64 ≈ 14 studs of air). The ring flashes and the bed squashes
+on every bounce. `radius` is 2–9. Walking across it still boings you
+— classic playground behavior. Admin-patchable: `power`.
+
+### 7.36 `economy.epoch` — the progress reset lever (v22)
+```json
+"economy": { "name": "Gold", "symbol": "$", "start": 25, "goal": 25000,
+             "epoch": 22 }
+```
+The relay stores every buy/claim so progress survives empty rooms.
+Bump `epoch` to a new number and every client IGNORES (and clears,
+relay-side) progress stored under the old epoch — a clean slate for
+everyone, no admin action needed. Peer snapshots carry their epoch;
+relay-stored state without one is legacy and is ignored by epoch'd
+worlds. v22 also fixed orphaned claims: a stored claim only counts
+while its owner is actually in the room (MP ids are per-session).
 
 ### 8. Building a world JSON with AI (v21.1)
 The client is a GENERIC ENGINE: it knows nothing about any map.
@@ -835,10 +891,11 @@ renders and plays, full stop. To have an AI build you a new map:
 2. Ask for a single JSON file `{id,name,desc,spawn,sky,terrain,
    scatter,build,logic,vars}` — the vocabulary is: `build[]` static
    parts (§5: `pos/size/color/material/shape/rot/lift/repeat/
-   noCollide/id/requires`) and the 23 `logic[]` entity types
-   (§7.1–§7.32: button claim dropper conveyor collector killbrick
+   noCollide/id/requires`) and the 25 `logic[]` entity types
+   (§7.1–§7.35: button claim dropper conveyor collector killbrick
    teleport checkpoint pad npc spawner pickup door sign claimer
-   zwave swing laser upgrader car mover lamp spinner blink).
+   zwave swing laser upgrader car mover lamp spinner blink vehicle
+   trampoline).
 3. Drop the file in `worlds/` and add one entry to `worlds/index.js`
    (the `/api/worlds` manifest the worker serves). No client
    changes, ever — that is the point.
