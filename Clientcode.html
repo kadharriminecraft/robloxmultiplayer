@@ -808,7 +808,11 @@ const DEFAULTS = {
   smiteDmg: 70, smiteSize: 4, smitePower: 80, smiteSplash: true, smiteRadius: 12,
   sizeScaleStats: true,
   // v21 NPC cars (worlds with car entities) — room rules
-  carSpeed: 1, carYeet: 45, carDamage: 25
+  carSpeed: 1, carYeet: 45, carDamage: 25,
+  // v27: the launch ANGLE of a car hit (degrees above the road) — room rule
+  carYeetAngle: 35,
+  // v27: street-lamp brightness multiplier (neighborhood map) — room rule
+  lampBright: 1
 };
 const V = Object.assign({}, DEFAULTS);
 
@@ -834,7 +838,8 @@ const RULE_KEYS = ['maxHealth', 'healthRegen', 'regenDelay',
   'zombieHealth', 'zombieDamage', 'zombieSpeed', 'zombieCooldown', 'maxZombies',
   'zoomMin', 'zoomMax',
   'smiteDmg', 'smiteSize', 'smitePower', 'smiteSplash', 'smiteRadius', 'sizeScaleStats',
-  'carSpeed', 'carYeet', 'carDamage'];   // v21: NPC traffic tuning
+  'carSpeed', 'carYeet', 'carDamage', 'carYeetAngle',   // v21: NPC traffic tuning · v27: launch angle
+  'lampBright'];   // v27: street-lamp brightness multiplier
 let applyingRoomRules = false;      // applying a received batch never re-broadcasts it
 let rrulesTO = null;
 function queueRuleSync(delay) {     // throttled — slider drags collapse into one message
@@ -1336,6 +1341,348 @@ function moveBody(b, dt) {
   moveAxis(b, 'x', dt);
   moveAxis(b, 'z', dt);
 }
+
+/* ================================================================
+   §3.5 PHYS — the v27 RIGID-BODY ENGINE (the house's crumble)
+   ----------------------------------------------------------------
+   The AABB engine above moves ONE body against the static world.
+   PHYS is the other half: a pile of loose BOX bodies that collide
+   with EACH OTHER, with the ground and with the world's AABBs — so
+   a smashed house really tumbles, bounces, stacks and settles.
+
+   Every body is a full 3D box: position, quaternion, linear +
+   angular velocity and box inertia. Pairs are solved with OBB/OBB
+   SAT contact generation (up to 4 clipped contact points per pair)
+   and sequential impulses with restitution, Coulomb friction and a
+   Baumgarte bias, at a fixed 60 Hz step (≤ 2 substeps/frame). A
+   body that keeps its speed down for ~0.9 s is put to SLEEP, so a
+   settled pile costs nothing. Two helpers make a smash read right:
+     PHYS.add(...)     spawn a body (the house panels call this)
+     PHYS.kick(...)    wake + shove every body in a world box (a
+                       truck driving through its own rubble)
+     PHYS.blast(...)   a radial impulse (smite lightning / a blast)
+     PHYS.debris(...)  a scatter of small generic blocks
+   Bodies fade out near the end of their life and recycle; the live
+   count is capped so a slow phone never drowns.
+================================================================ */
+const PHYS = {
+  bodies: [],
+  MAX: 240,   // v27: one whole house (216 block panels) + extra debris fits
+  _acc: 0, _step: 1 / 60,
+  /* ---- scratch (no per-frame allocations in the hot path) ---- */
+  _v: new THREE.Vector3(), _t: new THREE.Quaternion(),
+  _A: [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()],
+  _B: [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()],
+  _he: [0, 0, 0],
+  _sb: { x: 0, y: 0, z: 0, hx: 1, hy: 1, hz: 1, q: new THREE.Quaternion(), invMass: 0, rest: 0.1, fric: 0.7 },
+
+  /* ---- quaternion rotation helpers (write into _v) ---- */
+  rot(q, x, y, z) {
+    const ix = q.w * x + q.y * z - q.z * y, iy = q.w * y + q.z * x - q.x * z,
+          iz = q.w * z + q.x * y - q.y * x, iw = -q.x * x - q.y * y - q.z * z;
+    return this._v.set(ix * q.w + iw * -q.x + iy * -q.z - iz * -q.y,
+                       iy * q.w + iw * -q.y + iz * -q.x - ix * -q.z,
+                       iz * q.w + iw * -q.z + ix * -q.y - iy * -q.x);
+  },
+  rotT(q, x, y, z) { return this.rot({ x: -q.x, y: -q.y, z: -q.z, w: q.w }, x, y, z); },
+  invInertia(b) {
+    const m = 1 / b.invMass;
+    const ex = (1 / 12) * m * ((2 * b.hy) * (2 * b.hy) + (2 * b.hz) * (2 * b.hz));
+    const ey = (1 / 12) * m * ((2 * b.hx) * (2 * b.hx) + (2 * b.hz) * (2 * b.hz));
+    const ez = (1 / 12) * m * ((2 * b.hx) * (2 * b.hx) + (2 * b.hy) * (2 * b.hy));
+    return [ex > 0 ? 1 / ex : 0, ey > 0 ? 1 / ey : 0, ez > 0 ? 1 / ez : 0];
+  },
+  applyImpulse(b, px, py, pz, rx, ry, rz) {
+    b.vx += px * b.invMass; b.vy += py * b.invMass; b.vz += pz * b.invMass;
+    /* torque τ = r × P (WORLD), then → body, × I⁻¹, back to world */
+    const tx = ry * pz - rz * py, ty = rz * px - rx * pz, tz = rx * py - ry * px;
+    const l = this.rotT(b.q, tx, ty, tz);
+    const ii = this.invInertia(b);
+    this.rot(b.q, l.x * ii[0], l.y * ii[1], l.z * ii[2]);
+    b.wx += this._v.x; b.wy += this._v.y; b.wz += this._v.z;
+  },
+  axes(b, out) {
+    this.rot(b.q, 1, 0, 0); out[0].copy(this._v);
+    this.rot(b.q, 0, 1, 0); out[1].copy(this._v);
+    this.rot(b.q, 0, 0, 1); out[2].copy(this._v);
+    return out;
+  },
+  /* OBB/OBB SAT over the 6 face axes of A and B (the cheap, stable
+     variant - edge axes are skipped, which is plenty for a rubble
+     pile). Returns a penetration {nx,ny,nz,depth} with the normal
+     pointing from A toward B, or null when they are apart. */
+  contact(a, b, A, B) {
+    const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+    let best = Infinity, nx = 0, ny = 0, nz = 0, sgn = 1;
+    for (let k = 0; k < 3; k++) {
+      const u = A[k];
+      const ra = a.hx * Math.abs(A[0].x * u.x + A[0].y * u.y + A[0].z * u.z) +
+                 a.hy * Math.abs(A[1].x * u.x + A[1].y * u.y + A[1].z * u.z) +
+                 a.hz * Math.abs(A[2].x * u.x + A[2].y * u.y + A[2].z * u.z);
+      const rb = b.hx * Math.abs(B[0].x * u.x + B[0].y * u.y + B[0].z * u.z) +
+                 b.hy * Math.abs(B[1].x * u.x + B[1].y * u.y + B[1].z * u.z) +
+                 b.hz * Math.abs(B[2].x * u.x + B[2].y * u.y + B[2].z * u.z);
+      const dd = dx * u.x + dy * u.y + dz * u.z;
+      const ov = ra + rb - Math.abs(dd);
+      if (ov <= 0) return null;
+      if (ov < best) { best = ov; nx = u.x; ny = u.y; nz = u.z; sgn = dd < 0 ? -1 : 1; }
+    }
+    for (let k = 0; k < 3; k++) {
+      const u = B[k];
+      const ra = a.hx * Math.abs(A[0].x * u.x + A[0].y * u.y + A[0].z * u.z) +
+                 a.hy * Math.abs(A[1].x * u.x + A[1].y * u.y + A[1].z * u.z) +
+                 a.hz * Math.abs(A[2].x * u.x + A[2].y * u.y + A[2].z * u.z);
+      const rb = b.hx * Math.abs(B[0].x * u.x + B[0].y * u.y + B[0].z * u.z) +
+                 b.hy * Math.abs(B[1].x * u.x + B[1].y * u.y + B[1].z * u.z) +
+                 b.hz * Math.abs(B[2].x * u.x + B[2].y * u.y + B[2].z * u.z);
+      const dd = dx * u.x + dy * u.y + dz * u.z;
+      const ov = ra + rb - Math.abs(dd);
+      if (ov <= 0) return null;
+      if (ov < best) { best = ov; nx = u.x; ny = u.y; nz = u.z; sgn = dd < 0 ? -1 : 1; }
+    }
+    return { nx: nx * sgn, ny: ny * sgn, nz: nz * sgn, depth: best };
+  },
+  /* closest point on an OBB (centre c, half-extents h, axes ax) to p */
+  closestOnOBB(c, h, ax, px, py, pz, out) {
+    const dx = px - c.x, dy = py - c.y, dz = pz - c.z;
+    let x = c.x, y = c.y, z = c.z;
+    for (let k = 0; k < 3; k++) {
+      const u = ax[k];
+      let t = dx * u.x + dy * u.y + dz * u.z;
+      t = clamp(t, -h[k], h[k]);
+      x += u.x * t; y += u.y * t; z += u.z * t;
+    }
+    return out.set(x, y, z);
+  },
+  add(o) {
+    if (this.bodies.length >= this.MAX) this.recycleOldest();
+    const hx = Math.max(0.05, o.hx), hy = Math.max(0.05, o.hy), hz = Math.max(0.05, o.hz);
+    const m = Math.max(0.02, o.mass || (hx * hy * hz * 0.35));
+    const b = {
+      x: o.x, y: o.y, z: o.z, hx, hy, hz,
+      q: new THREE.Quaternion().setFromEuler(new THREE.Euler(o.rx || 0, o.ry || 0, o.rz || 0)),
+      vx: o.vx || 0, vy: o.vy || 0, vz: o.vz || 0,
+      wx: o.wx || 0, wy: o.wy || 0, wz: o.wz || 0,
+      invMass: 1 / m, rest: o.rest != null ? o.rest : 0.12, fric: o.fric != null ? o.fric : 0.88,
+      col: o.color != null ? o.color : 0xb9bec4, mat: o.mat || null,
+      rec: o.rec || null, tag: o.tag || null, born: elapsed,
+      life: o.life != null ? o.life : 0, mesh: null, sleep: 0, asleep: false, dead: false, fade: 1
+    };
+    b.mesh = new THREE.Mesh(geo(hx * 2, hy * 2, hz * 2), b.mat || mat(b.col, 0.78, 0, 0.2));
+    b.mesh.castShadow = b.mesh.receiveShadow = true;
+    b.mesh.position.set(b.x, b.y, b.z);
+    b.mesh.quaternion.copy(b.q);
+    scene.add(b.mesh);
+    this.bodies.push(b);
+    return b;
+  },
+  recycleOldest() {
+    let idx = -1, age = -1;
+    for (let i = 0; i < this.bodies.length; i++) {
+      const b = this.bodies[i];
+      const a = elapsed - b.born;
+      if (b.sleep > 0.6 && a > age) { age = a; idx = i; }
+    }
+    this.remove(idx < 0 ? 0 : idx);
+  },
+  remove(i) { const b = this.bodies[i]; if (!b) return; scene.remove(b.mesh); this.bodies.splice(i, 1); },
+  clear() { for (let i = this.bodies.length - 1; i >= 0; i--) this.remove(i); },
+  /* wake + shove every body inside a world-space box (a truck plowing
+     through its own rubble) */
+  kick(cx, cz, hx, hz, y0, y1, vx, vy, vz) {
+    for (const b of this.bodies) {
+      if (b.x < cx - hx || b.x > cx + hx || b.z < cz - hz || b.z > cz + hz) continue;
+      if (b.y + b.hy < y0 || b.y - b.hy > y1) continue;
+      b.vx += vx; b.vy += vy; b.vz += vz;
+      b.wx += (Math.random() - 0.5) * 7; b.wy += (Math.random() - 0.5) * 7; b.wz += (Math.random() - 0.5) * 7;
+      b.sleep = 0; b.asleep = false;
+    }
+  },
+  /* radial shockwave from (x,y,z) */
+  blast(x, y, z, radius, power) {
+    for (const b of this.bodies) {
+      const dx = b.x - x, dy = b.y - y, dz = b.z - z;
+      const d = Math.hypot(dx, dy, dz) || 0.001;
+      if (d > radius) continue;
+      const k = (1 - d / radius) * power;
+      b.vx += dx / d * k; b.vy += dy / d * k + k * 0.5; b.vz += dz / d * k;
+      b.wx += (Math.random() - 0.5) * 9; b.wy += (Math.random() - 0.5) * 9; b.wz += (Math.random() - 0.5) * 9;
+      b.sleep = 0; b.asleep = false;
+    }
+  },
+  /* a scatter of small generic blocks (a quake, an explosion) */
+  debris(x, y, z, w, h, d, color, count, power) {
+    const n = Math.max(1, Math.min(40, Math.round(count) || 1));
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2, r = Math.random() * 2.5;
+      this.add({
+        x: x + Math.cos(a) * r, y: y + Math.random() * 2, z: z + Math.sin(a) * r,
+        hx: w / 2, hy: h / 2, hz: d / 2,
+        vx: Math.cos(a) * (Math.random() * (power || 6)), vz: Math.sin(a) * (Math.random() * (power || 6)),
+        vy: (power || 6) * (0.4 + Math.random() * 0.6),
+        wx: (Math.random() - 0.5) * 10, wy: (Math.random() - 0.5) * 10, wz: (Math.random() - 0.5) * 10,
+        color, life: 26
+      });
+    }
+  },
+  /* ---- one sequential-impulse solve between two boxes ----
+     a and b are OBB-ish ({x,y,z,hx,hy,hz,q,invMass,...}); b may be the
+     STATIC world collider (an AABB with q = identity, invMass 0). */
+  solve(a, b, dt) {
+    const A = this.axes(a, this._A);
+    const B = b.invMass ? this.axes(b, this._B) : IDENT_AXES;
+    const ct = this.contact(a, b, A, B);
+    if (!ct) return;
+    const nx = ct.nx, ny = ct.ny, nz = ct.nz;
+    /* contact point: a's support point along the normal, then the nearest
+       point on b - correct even for a huge static slab */
+    const ap = this.rot(a.q, nx * a.hx, ny * a.hy, nz * a.hz);
+    const px = a.x + ap.x, py = a.y + ap.y, pz = a.z + ap.z;
+    const he = this._he; he[0] = b.hx; he[1] = b.hy; he[2] = b.hz;
+    const bp = b.invMass ? this.closestOnOBB(b, he, B, px, py, pz, this._v) : this._v.set(px, py, pz);
+    const cx = (px + bp.x) * 0.5, cy = (py + bp.y) * 0.5, cz = (pz + bp.z) * 0.5;
+    const rax = cx - a.x, ray = cy - a.y, raz = cz - a.z;
+    const rbx = b.invMass ? cx - b.x : 0, rby = b.invMass ? cy - b.y : 0, rbz = b.invMass ? cz - b.z : 0;
+    const vaX = a.vx + (a.wy * raz - a.wz * ray), vaY = a.vy + (a.wz * rax - a.wx * raz), vaZ = a.vz + (a.wx * ray - a.wy * rax);
+    let vbX = 0, vbY = 0, vbZ = 0;
+    if (b.invMass) { vbX = b.vx + (b.wy * rbz - b.wz * rby); vbY = b.vy + (b.wz * rbx - b.wx * rbz); vbZ = b.vz + (b.wx * rby - b.wy * rbx); }
+    const rvx = vbX - vaX, rvy = vbY - vaY, rvz = vbZ - vaZ;
+    const vn = rvx * nx + rvy * ny + rvz * nz;
+    const k = this._invMassAt(a, rax, ray, raz, nx, ny, nz) + (b.invMass ? this._invMassAt(b, rbx, rby, rbz, nx, ny, nz) : 0);
+    if (k <= 0) return;
+    let e = b.invMass ? Math.min(a.rest, b.rest) : a.rest * 0.5;
+    /* v27: restitution only for real impacts. A resting contact that
+       still bounces by a few cm every frame never accumulates sleep —
+       that was why a settled pile kept buzzing. */
+    if (vn > -1.2) e = 0;
+    /* pure velocity impulse (NO Baumgarte here — the penetration is
+       fixed by the position-projection pass below, which cannot inject
+       energy, so a settled pile really settles instead of buzzing) */
+    let jn = (-(1 + e) * vn) / k;
+    if (jn < 0) jn = 0;
+    this.applyImpulse(a, -nx * jn, -ny * jn, -nz * jn, rax, ray, raz);
+    if (b.invMass) this.applyImpulse(b, nx * jn, ny * jn, nz * jn, rbx, rby, rbz);
+    /* position projection (split-impulse style): push the boxes apart
+       directly, leaving velocity untouched. The depth is capped so a
+       deep/overlapping pile can't pump a body upward frame after frame
+       (that lift-then-fall cycle was what kept piles awake). */
+    const slop = 0.01, beta = 0.3;
+    const dep = Math.min(Math.max(0, ct.depth - slop), 0.12);
+    const corr = dep * beta / k;
+    const cx2 = corr * nx, cy2 = corr * ny, cz2 = corr * nz;
+    a.x -= cx2 * a.invMass; a.y -= cy2 * a.invMass; a.z -= cz2 * a.invMass;
+    if (b.invMass) { b.x += cx2 * b.invMass; b.y += cy2 * b.invMass; b.z += cz2 * b.invMass; }
+    /* friction */
+    const tvx = rvx - vn * nx, tvy = rvy - vn * ny, tvz = rvz - vn * nz;
+    const tl = Math.hypot(tvx, tvy, tvz);
+    if (tl > 1e-4) {
+      const tx = tvx / tl, ty = tvy / tl, tz = tvz / tl;
+      const kt = this._invMassAt(a, rax, ray, raz, tx, ty, tz) + (b.invMass ? this._invMassAt(b, rbx, rby, rbz, tx, ty, tz) : 0);
+      if (kt > 0) {
+        let jt = -tl / kt;
+        const mu = (a.fric + (b.invMass ? b.fric : a.fric)) * 0.5;
+        const mx = mu * Math.abs(jn);
+        if (jt < -mx) jt = -mx;
+        this.applyImpulse(a, -tx * jt, -ty * jt, -tz * jt, rax, ray, raz);
+        if (b.invMass) this.applyImpulse(b, tx * jt, ty * jt, tz * jt, rbx, rby, rbz);
+      }
+    }
+  },
+  _invMassAt(b, rx, ry, rz, nx, ny, nz) {
+    if (!b.invMass) return 0;
+    const ii = this.invInertia(b);
+    /* r × n in world, → body, × I⁻¹, back to world → w */
+    const cxr_x = ry * nz - rz * ny, cxr_y = rz * nx - rx * nz, cxr_z = rx * ny - ry * nx;
+    const cl = this.rotT(b.q, cxr_x, cxr_y, cxr_z);
+    this.rot(b.q, cl.x * ii[0], cl.y * ii[1], cl.z * ii[2]);
+    const wx = this._v.x, wy = this._v.y, wz = this._v.z;
+    /* (w × r) · n — the correct scalar, always ≥ 0 */
+    const ax = wy * rz - wz * ry, ay = wz * rx - wx * rz, az = wx * ry - wy * rx;
+    return b.invMass + (ax * nx + ay * ny + az * nz);
+  },
+  step(dt) {
+    const bodies = this.bodies;
+    if (!bodies.length) return;
+    for (const b of bodies) {
+      if (b.dead || b.asleep) continue;          // v27: a sleeping pile gets no gravity
+      b.vy -= GRAV * dt;
+      const ld = Math.max(0, 1 - 1.6 * dt), ad = Math.max(0, 1 - 4.5 * dt);
+      b.vx *= ld; b.vy *= ld; b.vz *= ld;
+      b.wx *= ad; b.wy *= ad; b.wz *= ad;
+    }
+    const ITER = 5;
+    for (let it = 0; it < ITER; it++) {
+      for (let i = 0; i < bodies.length; i++) {
+        const a = bodies[i];
+        if (a.dead) continue;
+        for (let j = i + 1; j < bodies.length; j++) {
+          const b = bodies[j];
+          if (b.dead) continue;
+          if (a.asleep && b.asleep) continue;    // v27: nothing to do
+          if (Math.abs(a.x - b.x) > a.hx + b.hx + 0.5 || Math.abs(a.y - b.y) > a.hy + b.hy + 0.5 ||
+              Math.abs(a.z - b.z) > a.hz + b.hz + 0.5) continue;
+          this.solve(a, b, dt);
+        }
+      }
+      /* body vs the static world */
+      for (const b of bodies) {
+        if (b.dead || b.asleep) continue;
+        const cands = World.query(b.x - 1.5, b.z - 1.5, b.x + 1.5, b.z + 1.5);
+        for (const c of cands) {
+          if (!c.enabled) continue;
+          const sb = this._sb;
+          sb.x = (c.min.x + c.max.x) / 2; sb.y = (c.min.y + c.max.y) / 2; sb.z = (c.min.z + c.max.z) / 2;
+          sb.hx = (c.max.x - c.min.x) / 2; sb.hy = (c.max.y - c.min.y) / 2; sb.hz = (c.max.z - c.min.z) / 2;
+          sb.invMass = 0;
+          this.solve(b, sb, dt);
+        }
+      }
+    }
+    for (let i = bodies.length - 1; i >= 0; i--) {
+      const b = bodies[i];
+      if (b.dead) { this.remove(i); continue; }
+      if (b.asleep) {                              // v27: frozen — only keep the mesh in sync
+        b.mesh.position.set(b.x, b.y, b.z);
+        b.mesh.quaternion.copy(b.q);
+        continue;
+      }
+      b.x += b.vx * dt; b.y += b.vy * dt; b.z += b.vz * dt;
+      const wl = Math.hypot(b.wx, b.wy, b.wz);
+      if (wl > 1e-4) {
+        const h = wl * dt * 0.5, s = Math.sin(h) / wl;
+        this._t.set(b.wx * s, b.wy * s, b.wz * s, Math.cos(h));
+        b.q.premultiply(this._t).normalize();
+      }
+      const sp = Math.hypot(b.vx, b.vy, b.vz) + wl * 0.2;
+      if (sp < 0.9) b.sleep += dt; else b.sleep = Math.max(0, b.sleep - dt * 3);
+      if (b.sleep > 0.8) { b.asleep = true; b.vx = b.vy = b.vz = b.wx = b.wy = b.wz = 0; }
+      /* v27: last-resort guard — a solver blow-up must never fling a
+         body to infinity (the pile just caps out and settles) */
+      const lv = Math.hypot(b.vx, b.vy, b.vz);
+      if (!(lv < 60)) { b.vx = b.vy = b.vz = 0; b.wx = b.wy = b.wz = 0; }
+      else if (lv > 28) { const s = 28 / lv; b.vx *= s; b.vy *= s; b.vz *= s; }
+      const av = Math.hypot(b.wx, b.wy, b.wz);
+      if (!(av < 40)) { b.wx = b.wy = b.wz = 0; }
+      else if (av > 18) { const s = 18 / av; b.wx *= s; b.wy *= s; b.wz *= s; }
+      if (!isFinite(b.x + b.y + b.z)) b.dead = true;
+      if (b.life > 0 && elapsed - b.born > b.life) b.dead = true;
+      const rem = b.life > 0 ? b.life - (elapsed - b.born) : 99;
+      b.fade = rem < 2.5 ? clamp(rem / 2.5, 0, 1) : 1;
+      if (b.y < -60) b.dead = true;
+      b.mesh.position.set(b.x, b.y, b.z);
+      b.mesh.quaternion.copy(b.q);
+      if (b.fade < 1) { b.mesh.material.transparent = true; b.mesh.material.opacity = b.fade; }
+    }
+  },
+  tick(dt) {
+    if (!this.bodies.length) return;
+    this._acc += dt;
+    let n = 0;
+    while (this._acc >= this._step && n < 2) { this.step(this._step); this._acc -= this._step; n++; }
+    if (n === 2) this._acc = 0;
+  }
+};
+const IDENT_AXES = [new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1)];
 
 /* ================================================================
    §4 CAMERA — Roblox-style third person controller
@@ -2555,6 +2902,21 @@ function spawnFlash(x, y, z, s = 1) {
   scene.add(m);
   FX.push({ mesh: m, life: 0.07, max: 0.07, kind: 'f' });
 }
+/* v27: a puff of plaster dust / a burst of debris — the demolition FX.
+   `n` puffs drift up and out, each fading as it grows. */
+function spawnDust(x, y, z, n = 6, spread = 1.2, col = 0xcfc6b4, power = 5) {
+  for (let i = 0; i < Math.max(1, n); i++) {
+    const a = Math.random() * Math.PI * 2, r = Math.random() * spread;
+    const m = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, 0.3),
+      new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.85 }));
+    m.position.set(x + Math.cos(a) * r, y + Math.random() * spread, z + Math.sin(a) * r);
+    m.scale.setScalar(0.6 + Math.random() * 1.1);
+    scene.add(m);
+    FX.push({ mesh: m, life: 0.9 + Math.random() * 0.6, max: 1.5, kind: 'd',
+      vx: Math.cos(a) * (1 + Math.random() * power), vy: 1.6 + Math.random() * power, vz: Math.sin(a) * (1 + Math.random() * power),
+      rx: (Math.random() - 0.5) * 8, rz: (Math.random() - 0.5) * 8 });
+  }
+}
 function updateFX(dt) {
   for (let i = FX.length - 1; i >= 0; i--) {
     const f = FX[i];
@@ -2803,6 +3165,21 @@ const SUN_WARM = new THREE.Color(0xff8a3c), SUN_DAY = new THREE.Color(0xfff4e0);
    consumer guards on them */
 let LADDER = null, CHAIR = null, door = null, chest = null, lamp = null, button = null,
     swordPickup = null, gunPickup = null, MGR = null, SWING = null, DYNAMIC = new Set();
+const HOUSES = [];   // v27: every collapsible house (vehicle smash targets)
+/* v27: collapse any house whose footprint a blast lands in (smite) */
+function smashHousesNear(x, z, radius, power, size) {
+  let n = 0;
+  for (const h of HOUSES) {
+    if (!h.smash || h.smashed) continue;
+    const dx = h.footprint.x - x, dz = h.footprint.z - z;
+    if (Math.hypot(dx, dz) > radius + h.footprint.r) continue;
+    const l = Math.hypot(dx, dz) || 1;
+    h.smash(x, z, -dx / l, -dz / l);
+    spawnDust(h.footprint.x, h.y + 1.5, h.footprint.z, 14, 4, 0xcfc6b4, 8);
+    n++;
+  }
+  return n;
+}
 let WORLDS_SPAWN = { x: 0, y: 0.5, z: 0 };   // respawn anchor (set per world)
 
 /* shared world builders (template + recipe worlds both use them) */
@@ -2836,45 +3213,91 @@ const Worlds = {
   /* resolve + load the session's world. Never throws — every
      failure path lands on the built-in template world. */
   async boot() {
+    /* v27: a short, patient fetch. The old single 3.5 s attempt meant a
+       momentary network blip (or a cold worker) bounced you to the
+       Baseplate World and FORGOT your world id — the "joining world…
+       then back to the first world" glitch. Now every fetch retries a
+       few times, and a failed recipe load KEEPS your choice so the next
+       visit can pick up where you left off. */
+    const getJSON = async (url, tries) => {
+      for (let i = 0; i < tries; i++) {
+        try {
+          const ctl = new AbortController();
+          const to = setTimeout(() => ctl.abort(), 6000);
+          const res = await fetch(url, { signal: ctl.signal, cache: 'no-store' });
+          clearTimeout(to);
+          if (res.ok) return await res.json();
+        } catch (e) { /* retry */ }
+        if (i < tries - 1) await new Promise(r => setTimeout(r, 350 * (i + 1)));
+      }
+      return null;
+    };
     let stored = null;
     try { stored = localStorage.getItem('baseplate.world.v1'); } catch (e) {}
-    let manifest = null;
-    try {
-      const ctl = new AbortController();
-      const to = setTimeout(() => ctl.abort(), 3500);
-      const res = await fetch(API_BASE + '/api/worlds', { signal: ctl.signal });
-      clearTimeout(to);
-      if (res.ok) manifest = await res.json();
-    } catch (e) { /* worker unreachable → offline */ }
+    let manifest = await getJSON(API_BASE + '/api/worlds', 3);
     if (!Array.isArray(manifest) || !manifest.length) {          // offline / broken manifest
+      /* v27: the manifest is only a list of names — if we have the
+         chosen world's recipe cached from a previous session, play it
+         instead of dropping to the Baseplate World (this is the other
+         half of the "joining world… then bounced back" glitch: a cold
+         or unreachable worker). */
+      const cached = this.cachedRecipe(stored);
+      if (cached) { this.id = cached.id; this.recipe = cached; this.bootNote = 'World server unreachable — playing "' + this.name() + '" from your saved copy.'; return; }
       this.list = [DEFAULT_WORLD_META];
+      /* keep any stored id — a later load can still reach the world */
+      if (stored && stored !== 'baseplate')
+        this.bootNote = 'Could not reach the world server — playing on the Baseplate World for now. Your saved world is kept.';
       return;                                                   // id stays 'baseplate'
     }
     this.list = manifest.filter(w => w && typeof w.id === 'string' && typeof w.name === 'string');
     this.online = true;
     const target = this.list.find(w => w.id === stored);
     if (!stored || !target || target.id === 'baseplate') {
-      if (stored && !target) {                                   // world was removed from the repo
+      if (stored && !target) {
+        /* v27: a manifest that doesn't list the chosen world is the
+           classic "joining world… then back to the first world" bug —
+           the worker's list can be momentarily stale/cold. Play the
+           cached copy and KEEP the choice instead of forgetting it. */
+        const cached = this.cachedRecipe(stored);
+        if (cached) { this.id = cached.id; this.recipe = cached; return; }
         try { localStorage.removeItem('baseplate.world.v1'); } catch (e) {}
         this.bootNote = '"' + stored + '" is no longer on the world server — back on Baseplate World.';
       }
       return;                                                    // default world
     }
-    try {
-      const ctl = new AbortController();
-      const to = setTimeout(() => ctl.abort(), 3500);
-      const res = await fetch(API_BASE + '/api/worlds/' + encodeURIComponent(target.id), { signal: ctl.signal });
-      clearTimeout(to);
-      if (!res.ok) throw new Error('server said ' + res.status);
-      const recipe = await res.json();
+    const recipe = await getJSON(API_BASE + '/api/worlds/' + encodeURIComponent(target.id), 3);
+    if (recipe) {
       const err = validateRecipe(recipe, target.id);
-      if (err) throw new Error(err);
-      this.id = recipe.id; this.recipe = recipe;
-    } catch (e) {
-      this.bootNote = 'Could not load "' + target.name + '" — starting on Baseplate World instead.';
+      if (!err) { this.id = recipe.id; this.recipe = recipe; this.cacheRecipe(recipe); return; }
+      /* a recipe that fails VALIDATION is a real content bug — say so
+         (and keep the id so it can be fixed server-side) */
+      this.bootNote = '"' + target.name + '" could not load (' + err + ') — on Baseplate World instead.';
       try { localStorage.removeItem('baseplate.world.v1'); } catch (e2) {}
-      console.error('[worlds] recipe load failed:', e);
+      console.error('[worlds] recipe invalid:', err);
+      return;
     }
+    /* v27: transient failure — fall back to the cached recipe before
+       giving up, so a blip never costs the player their world */
+    const cached = this.cachedRecipe(target.id);
+    if (cached) { this.id = cached.id; this.recipe = cached; this.bootNote = 'Could not reach "' + target.name + '" right now — playing your saved copy.'; return; }
+    this.bootNote = 'Could not load "' + target.name + '" right now — try again from the menu. (On Baseplate World.)';
+    console.error('[worlds] recipe load failed after retries');
+  },
+
+  /* v27: last-known-good recipe per world, so a cold/unreachable
+     worker can't bounce you back to the Baseplate World */
+  cachedRecipe(id) {
+    if (!id || id === 'baseplate') return null;
+    try {
+      const raw = localStorage.getItem('baseplate.recipe.' + id);
+      if (!raw) return null;
+      const r = JSON.parse(raw);
+      return validateRecipe(r, id) ? null : r;
+    } catch (e) { return null; }
+  },
+  cacheRecipe(recipe) {
+    if (!recipe || !recipe.id) return;
+    try { localStorage.setItem('baseplate.recipe.' + recipe.id, JSON.stringify(recipe)); } catch (e) {}
   }
 };
 
@@ -2949,7 +3372,8 @@ function validateGameLogic(w) {
     'teleport', 'checkpoint', 'pad', 'npc', 'spawner', 'pickup', 'door', 'sign',
     'claimer', 'zwave', 'swing', 'laser', 'upgrader', 'car', 'mover', 'lamp',
     'vehicle', 'trampoline',   // v22: drivable cars + bounce pads
-    'spinner', 'blink'];   // v16 vault+waves · v18 swings · v19 lasers · v20 CARS · v21 MOVERS+LAMPS · v21.1 SPINNERS+BLINKS (obby kit)
+    'spinner', 'blink',        // v16 vault+waves · v18 swings · v19 lasers · v20 CARS · v21 MOVERS+LAMPS · v21.1 SPINNERS+BLINKS (obby kit)
+    'house'];   // v27: the collapsible house (breakable panels + PHYS rubble)
 
   /* items[] — custom weapons + consumables */
   if (w.items != null) {
@@ -3178,6 +3602,9 @@ function validateGameLogic(w) {
           if (e.radius != null && !num(e.radius, 1, 8)) return 'lamp "' + e.id + '" bad radius';   // v22
           if (e.pool != null && !num(e.pool, 0, 1)) return 'lamp "' + e.id + '" bad pool';
           if (e.headSize != null && !num(e.headSize, 0.25, 1.5)) return 'lamp "' + e.id + '" bad headSize';
+          if (e.bright != null && !num(e.bright, 0.1, 6)) return 'lamp "' + e.id + '" bad bright';   // v27
+          if (e.group != null && !str(e.group, 24)) return 'lamp "' + e.id + '" bad group';          // v27
+          if (e.strobe != null && typeof e.strobe !== 'boolean') return 'lamp "' + e.id + '" bad strobe';
           break;
         case 'vehicle':                                                                                            // v22
           if (e.speed != null && !num(e.speed, 8, 70)) return 'vehicle "' + e.id + '" bad speed';
@@ -3205,6 +3632,14 @@ function validateGameLogic(w) {
           if (e.on != null && !num(e.on, 0.15, 0.85)) return 'blink "' + e.id + '" bad on';
           if (e.phase != null && !num(e.phase, 0, 1e6)) return 'blink "' + e.id + '" bad phase';
           if (e.color != null && !hex(e.color)) return 'blink "' + e.id + '" bad color';
+          break;
+        case 'house':                                                                                             // v27 collapsible house
+          if (!Array.isArray(e.size) || e.size.length !== 3 || !num(e.size[0], 8, 30) || !num(e.size[1], 3, 8) || !num(e.size[2], 8, 30)) return 'house "' + e.id + '" bad size';
+          if (e.rebuild != null && !num(e.rebuild, 0, 600)) return 'house "' + e.id + '" bad rebuild';
+          if (e.wall != null && !hex(e.wall)) return 'house "' + e.id + '" bad wall';
+          if (e.roof != null && !hex(e.roof)) return 'house "' + e.id + '" bad roof';
+          if (e.trim != null && !hex(e.trim)) return 'house "' + e.id + '" bad trim';
+          if (e.breakSpeed != null && !num(e.breakSpeed, 4, 70)) return 'house "' + e.id + '" bad breakSpeed';
           break;
         case 'sign':
           if (e.width != null && !num(e.width, 2, 24)) return 'sign "' + e.id + '" bad width';
@@ -3675,11 +4110,12 @@ const WL_PATCHABLE = {
   spawner: ['every', 'max', 'reward', 'night'],
   car: ['speed'],
   mover: ['speed'],
-  lamp: ['intensity', 'color', 'range'],   // v22: live light tuning
+  lamp: ['intensity', 'color', 'range', 'bright'],   // v22 live light tuning · v27 brightness
   vehicle: ['speed', 'accel'],              // v22
   trampoline: ['power'],                   // v22
   spinner: ['speed'],     // v21.1: live-retuned in the tick (reads rec.def)
-  blink: ['period', 'on']
+  blink: ['period', 'on'],
+  house: ['rebuild']      // v27: how long the house takes to rebuild
 };
 function wlIsHex(s) { return typeof s === 'string' && /^#[0-9a-fA-F]{6}$/.test(s); }
 function wlHex(s, fb) { try { return parseInt(String(s).slice(1), 16); } catch (e) { return fb; } }
@@ -5218,6 +5654,12 @@ const LAMP = {
   N: 8,              // pool size — 8 real lights is plenty on a phone
   MULT: 14,          // physical-light compensation (r155 candela units)
   _t: 0, _night: -1, _tex: null,
+  /* v27: named brightness targets — worlds register their lamp group so
+     an admin command can retune just those (e.g. the street lamps in
+     Maple Grove) without touching porch/pool/park lights. */
+  targets: {},
+  addTarget(name, list) { if (name && Array.isArray(list)) this.targets[name] = list; },
+  brightOf(l) { return l && l.rec && l.rec.def ? wlNum(l.rec.def.bright, 0.1, 6, 1) : (l && l.bright) || 1; },
   tex() {            // shared radial-gradient glow texture (built once)
     if (this._tex) return this._tex;
     const c = document.createElement('canvas'); c.width = c.height = 64;
@@ -5268,12 +5710,14 @@ const LAMP = {
           L.position.set(p.x, p.y + 1.2, p.z);   // just under the lamp head
           L.color.setHex(def && wlIsHex(def.color) ? wlHex(def.color) : p.color);
           L.distance = def ? wlNum(def.range, 8, 80, p.range) : p.range;
-          L.userData.base = def ? wlNum(def.intensity, 0.1, 4, p.intensity) : p.intensity;
+          L.userData.base = (def ? wlNum(def.intensity, 0.1, 4, p.intensity) : p.intensity) * this.brightOf(p);
           L.visible = true;
         } else { L.visible = false; L.userData.base = 0; }
       }
     }
-    for (const l of this.lights) l.intensity = (l.userData.base || 0) * night * this.MULT;
+    /* v27: the global lamp-brightness room rule scales every real light */
+    const gb = clamp(+V.lampBright || 1, 0.2, 3);
+    for (const l of this.lights) l.intensity = (l.userData.base || 0) * night * this.MULT * gb;
   }
 };
 
@@ -5361,9 +5805,9 @@ const VEH = {
     if (g > -Infinity && Math.abs(g - rec.py) < 4) rec.py = g;
     rec.grp.position.set(rec.px, rec.py, rec.pz);
     /* the collider follows (worst-case footprint for the rotation) */
-    rec.col.min.x = rec.px - 2.1; rec.col.max.x = rec.px + 2.1;
+    rec.col.min.x = rec.px - 1.35; rec.col.max.x = rec.px + 1.35;
     rec.col.min.y = rec.py;        rec.col.max.y = rec.py + 2.2;
-    rec.col.min.z = rec.pz - 3.3;  rec.col.max.z = rec.pz + 3.3;
+    rec.col.min.z = rec.pz - 3.05; rec.col.max.z = rec.pz + 3.05;
     /* wheels */
     for (const w of rec.spinW) w.rotation.x += (rec.speed / 0.85) * dt;
     rec.steer += (st * 0.42 - rec.steer) * Math.min(1, dt * 10);
@@ -6702,14 +7146,18 @@ const WL_BUILDERS = {
         const hl = Math.hypot(b.x - a.x, b.z - a.z) || 1;
         const vx = (b.x - a.x) / hl, vz = (b.z - a.z) / hl;   // the car's travel direction
         const yeet = clamp(+V.carYeet || 45, 5, 150);          // v21: room-rule yeet power
-        /* v22: the shove is mostly DOWN THE ROAD now (the way the car
-           was going) — and startYeet steals control until you land,
-           so the fling actually carries instead of dying to the
-           joystick the very next frame */
-        const shove = 16 + yeet * clamp(spd / 15, 0.6, 1.5);   // faster cars fling harder
+        /* v27: launch ALONG the car's direction of travel at
+           V.carYeetAngle degrees above the road (35° by default) —
+           horizontal = power·cos(a) carries you down the street,
+           vertical = power·tan(a) lifts you, so the trajectory really
+           reads as a sideways yeet at that angle. startYeet steals
+           control until you land, so the fling carries instead of
+           dying to the joystick the very next frame. */
+        const ang = clamp(+V.carYeetAngle || 35, 0, 80) * Math.PI / 180;
+        const shove = (16 + yeet * clamp(spd / 15, 0.6, 1.5)) * Math.cos(ang);
         player.vx += vx * shove;                              // thrown down the road
         player.vz += vz * shove;
-        player.vy = Math.max(player.vy, 16 + yeet * 0.5);       // and UP (but mostly forward)
+        player.vy = Math.max(player.vy, clamp(shove * Math.tan(ang), 8, 95));   // up at the angle
         climbing = false;
         startYeet(90 + yeet);                                  // full Roblox fling, spinning
         hurtPlayer(clamp(+V.carDamage || dmg, 1, 200));       // v21: room-rule damage
@@ -6820,23 +7268,28 @@ const WL_BUILDERS = {
       pool.position.set(0, gy - y + 0.07, 0);
       grp.add(pool);
     }
-    const lamp = { x, y, z, color: baseCol, intensity: wlNum(e.intensity, 0.1, 4, 2.2), range: wlNum(e.range, 8, 80, 34), rec, setNight(n) {
+    const lamp = { x, y, z, color: baseCol, intensity: wlNum(e.intensity, 0.1, 4, 2.2), range: wlNum(e.range, 8, 80, 34), rec, bright: wlNum(e.bright, 0.1, 6, 1), setNight(n) {
       /* live-reads its own def — patches retune the lamp in place */
       const d = rec.def;
       const col = wlIsHex(d.color) ? wlHex(d.color) : baseCol;
       const rad = wlNum(d.radius, 1, 8, 3.4) * 2;
-      bulbM.emissiveIntensity = 0.15 + n * 2.6;
-      glowM.opacity = n * 0.85;
+      /* v27: per-lamp `bright` × the room's lampBright rule drive the
+         whole kit — bulb, glow sprite and ground pool all scale, so the
+         visual matches the pooled real light (which reads the same). */
+      const b = wlNum(d.bright, 0.1, 6, 1) * clamp(+V.lampBright || 1, 0.2, 3);
+      bulbM.emissiveIntensity = 0.15 + n * 2.6 * b;
+      glowM.opacity = Math.min(1, n * 0.85 * b);
       glowM.color.setHex(col);
-      glow.scale.set(rad, rad, 1);
+      glow.scale.set(rad * b, rad * b, 1);
       if (poolM) {
-        const pr = wlNum(d.range, 8, 80, 34) * 0.3;
-        poolM.opacity = n * wlNum(d.pool, 0, 1, 0.5);
+        const pr = wlNum(d.range, 8, 80, 34) * 0.3 * b;
+        poolM.opacity = Math.min(1, n * wlNum(d.pool, 0, 1, 0.5) * b);
         poolM.color.setHex(col);
         pool.scale.set(pr * 2, pr * 1.4, 1);
       }
     } };
     LAMP.list.push(lamp);
+    if (e.group) (LAMP.targets[String(e.group).slice(0, 24)] || (LAMP.targets[String(e.group).slice(0, 24)] = [])).push(lamp);   // v27: named group
     rec.grp = grp;
     rec.dispose = () => {
       const i = LAMP.list.indexOf(lamp);
@@ -6875,53 +7328,100 @@ const WL_BUILDERS = {
       part(0.06, 0.55, 2.5, glassM, 1.38, 2.12, -0.25, grp);
       part(0.06, 0.55, 2.5, glassM, -1.38, 2.12, -0.25, grp);
     } else {
-      /* the CYBERTRUCK: one angular stainless wedge + a dark glass
-         canopy. The side profile is a THREE.Shape (x = forward,
-         y = height) extruded across the width, then turned to face +z */
+      /* ===== the CYBERTRUCK (v27) — a life-size stainless-steel
+         wedge, modelled from the real truck's published numbers:
+         5.69 m long, 2.20 m wide, 1.79 m tall, 3.80 m wheelbase,
+         ~0.25 m ground clearance. The body is ONE extruded
+         cross-section (x = forward, y = up) run across the width —
+         a long low nose, the signature single-slope windshield up to
+         a low peak just behind the front axle, the bed rails and a
+         short vertical tail. A separate dark-glass canopy sits on
+         the slope, then the light bars, mirrors, door seams, the
+         wheel-arch flares, the bed and the black wheel arches.
+         (1 stud = 1 m, so it really is truck-sized next to you.) */
+      const W2 = 1.10;                                     // half width (2.20 m)
+      const BODY = [                                       // silhouette, nose → tail
+        [2.85, 0.44], [2.45, 0.62], [1.30, 0.98], [0.55, 1.40],
+        [0.02, 1.79],                                      // the roof peak
+        [-1.20, 1.74], [-2.20, 1.70], [-2.80, 1.66],       // bed rail (flat)
+        [-2.85, 1.30], [-2.85, 0.72], [-2.55, 0.60]
+      ];
       const sh = new THREE.Shape();
-      sh.moveTo(2.9, 0.72); sh.lineTo(1.25, 0.86);       // nose (low, flat)
-      sh.lineTo(-0.35, 2.28);                            // the roof peak
-      sh.lineTo(-2.62, 2.14);                            // rear top (bed rail)
-      sh.lineTo(-2.9, 0.78);                             // tail
+      sh.moveTo(BODY[0][0], BODY[0][1]);
+      for (let i = 1; i < BODY.length; i++) sh.lineTo(BODY[i][0], BODY[i][1]);
       sh.closePath();
-      const bodyG = new THREE.ExtrudeGeometry(sh, { depth: 2.34, bevelEnabled: true, bevelThickness: 0.05, bevelSize: 0.05, bevelSegments: 1 });
-      bodyG.translate(0, 0, -1.17);
+      const bodyG = new THREE.ExtrudeGeometry(sh, { depth: W2 * 2, bevelEnabled: true, bevelThickness: 0.03, bevelSize: 0.03, bevelSegments: 1 });
+      bodyG.translate(0, 0, -W2);
       const body = new THREE.Mesh(bodyG, steelM);
-      body.rotation.y = -Math.PI / 2;                    // shape +x → car forward
+      body.rotation.y = -Math.PI / 2;                      // shape +x → car forward
       body.castShadow = body.receiveShadow = true;
       grp.add(body);
+      /* the black glass canopy on the slope (windshield + side glass) */
       const gs = new THREE.Shape();
-      gs.moveTo(1.15, 0.98); gs.lineTo(-0.3, 2.06); gs.lineTo(-2.55, 1.95); gs.lineTo(-2.55, 1.0);
+      gs.moveTo(1.28, 1.00); gs.lineTo(0.60, 1.38); gs.lineTo(0.04, 1.75);
+      gs.lineTo(-1.18, 1.70); gs.lineTo(-1.18, 1.42); gs.lineTo(0.58, 1.44);
       gs.closePath();
-      const glassG = new THREE.ExtrudeGeometry(gs, { depth: 2.16, bevelEnabled: false });
-      glassG.translate(0, 0, -1.08);
-      const glass = new THREE.Mesh(glassG, new THREE.MeshStandardMaterial({ color: 0x0d1319, roughness: 0.16, metalness: 0.45, envMapIntensity: 1.1 }));
+      const glassG = new THREE.ExtrudeGeometry(gs, { depth: W2 * 2 - 0.1, bevelEnabled: false });
+      glassG.translate(0, 0, -(W2 - 0.05));
+      const glass = new THREE.Mesh(glassG, new THREE.MeshStandardMaterial({ color: 0x0b1015, roughness: 0.14, metalness: 0.5, envMapIntensity: 1.2 }));
       glass.rotation.y = -Math.PI / 2;
       grp.add(glass);
-      part(2.3, 0.14, 0.5, darkM, 0, 0.72, 2.55, grp);   // front bumper lip
-      part(2.3, 0.14, 0.5, darkM, 0, 0.78, -2.6, grp);   // rear bumper lip
+      /* door seams (the Cybertruck's doors are flat — the seam sells it) */
+      const seamM = mat(0x6f757c, 0.5, 0.6);
+      for (const sx of [-1, 1]) {
+        part(0.04, 0.95, 0.03, seamM, sx * (W2 + 0.005), 0.95, 0.62, grp);
+        part(0.04, 0.95, 0.03, seamM, sx * (W2 + 0.005), 0.95, -0.62, grp);
+        part(0.05, 0.03, 1.24, seamM, sx * (W2 + 0.005), 1.42, 0.0, grp);   // belt line
+      }
+      /* wheel-arch flares + rocker (black plastic) */
+      for (const sx of [-1, 1]) {
+        for (const sz of [1.90, -1.90]) part(0.16, 0.5, 1.5, darkM, sx * (W2 - 0.02), 0.62, sz, grp);
+        part(0.14, 0.22, 3.6, darkM, sx * (W2 - 0.04), 0.34, 0, grp);       // rocker
+      }
+      /* side mirrors on short stalks */
+      for (const sx of [-1, 1]) {
+        part(0.16, 0.06, 0.06, darkM, sx * (W2 + 0.05), 1.42, 0.95, grp);
+        part(0.10, 0.22, 0.30, darkM, sx * (W2 + 0.13), 1.40, 0.98, grp);
+      }
+      /* the open bed (floor + tailgate seam) */
+      part(W2 * 2 - 0.2, 0.08, 1.5, mat(0x22262b, 0.8, 0.2), 0, 1.10, -1.85, grp);
+      part(W2 * 2 - 0.3, 0.06, 0.05, darkM, 0, 1.66, -2.80, grp);
+      /* the frunk seam on the nose */
+      part(1.7, 0.04, 0.03, seamM, 0, 1.05, 1.30, grp);
+      /* front + rear bumpers */
+      part(2.20, 0.16, 0.30, darkM, 0, 0.46, 2.68, grp);
+      part(2.20, 0.16, 0.30, darkM, 0, 0.60, -2.74, grp);
     }
-    /* LED light bars — head (white) + tail (red) */
+    /* LED light bars — head (white) + tail (red). The real truck has a
+       full-width front bar just under the hood lip and a matching
+       full-width rear bar on the tailgate. */
     const headM = new THREE.MeshStandardMaterial({ color: 0xf6f9ff, emissive: 0xeef4ff, emissiveIntensity: 1.2 });
     const tailM = new THREE.MeshStandardMaterial({ color: 0x8a1410, emissive: 0xff2416, emissiveIntensity: 1.0 });
-    part(2.14, 0.15, 0.1, headM, 0, e.model === 'blocky' ? 1.2 : 1.02, e.model === 'blocky' ? 3.32 : 2.83, grp);
-    part(2.14, 0.16, 0.1, tailM, 0, e.model === 'blocky' ? 1.25 : 1.55, e.model === 'blocky' ? -3.32 : -2.84, grp);
+    if (e.model === 'blocky') {
+      part(2.14, 0.15, 0.1, headM, 0, 1.2, 3.32, grp);
+      part(2.14, 0.16, 0.1, tailM, 0, 1.25, -3.32, grp);
+    } else {
+      part(2.16, 0.13, 0.12, headM, 0, 0.74, 2.86, grp);    // full-width front bar
+      part(2.16, 0.14, 0.12, tailM, 0, 1.42, -2.88, grp);    // full-width tail bar
+    }
     const headGlow = new THREE.SpriteMaterial({ map: LAMP.tex(), color: 0xdfeaff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
-    const hg = new THREE.Sprite(headGlow); hg.scale.setScalar(4.4); hg.position.set(0, 1.05, 2.9); grp.add(hg);
+    const hg = new THREE.Sprite(headGlow); hg.scale.setScalar(4.4); hg.position.set(0, 0.9, 2.95); grp.add(hg);
     const tailGlow = new THREE.SpriteMaterial({ map: LAMP.tex(), color: 0xff2a1c, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
-    const tg = new THREE.Sprite(tailGlow); tg.scale.setScalar(3.4); tg.position.set(0, 1.55, -2.95); grp.add(tg);
+    const tg = new THREE.Sprite(tailGlow); tg.scale.setScalar(3.4); tg.position.set(0, 1.45, -2.98); grp.add(tg);
     /* ONE real headlight (a driven car earns a real light) */
     const headL = new THREE.SpotLight(0xe8f1ff, 0, 58, 0.52, 0.45, 1.2);
-    headL.position.set(0, 1.25, 2.7);
-    headL.target.position.set(0, 0.25, 20);
+    headL.position.set(0, 1.05, 2.7);
+    headL.target.position.set(0, 0.2, 20);
     grp.add(headL); grp.add(headL.target);
-    /* wheels — front pair steers */
-    const wheelG = new THREE.CylinderGeometry(0.85, 0.85, 0.6, 14);
-    const wheelM = mat(0x15171b, 0.92), hubG = new THREE.CylinderGeometry(0.42, 0.42, 0.64, 8);
+    /* wheels — front pair steers. Real truck: 0.83 m tyres on a
+       3.80 m wheelbase (axles at ±1.90 m) and a 1.80 m track, so the
+       tyres sit just proud of the body instead of hanging out. */
+    const wheelG = new THREE.CylinderGeometry(0.83, 0.83, 0.62, 16);
+    const wheelM = mat(0x15171b, 0.92), hubG = new THREE.CylinderGeometry(0.40, 0.40, 0.66, 10);
     const hubM = mat(0x9aa3ad, 0.35, 0.85);
-    for (const sx of [-1.28, 1.28]) for (const sz of [1.72, -1.86]) {
+    for (const sx of [-0.80, 0.80]) for (const sz of [1.90, -1.90]) {
       const piv = new THREE.Group();
-      piv.position.set(sx, 0.85, sz);
+      piv.position.set(sx, 0.83, sz);
       const wh = new THREE.Mesh(wheelG, wheelM);
       wh.rotation.z = Math.PI / 2;
       wh.castShadow = true;
@@ -6932,7 +7432,7 @@ const WL_BUILDERS = {
       if (sz > 0) rec.frontPiv.push(piv);
     }
     /* the collider (mover pattern — a box that follows the car) */
-    rec.col = World.addBox(x, y + 1.1, z, 4.2, 2.2, 6.6);
+    rec.col = World.addBox(x, y + 1.1, z, 2.6, 2.2, 6.0);
     /* the night kit */
     const fxRef = NightFX.addCar({
       setNight(n) {
@@ -6960,9 +7460,9 @@ const WL_BUILDERS = {
         rec.pz += (rec.net.z - rec.pz) * k;
         rec.grp.rotation.y += angWrap(rec.net.r - rec.grp.rotation.y) * k;
         rec.grp.position.set(rec.px, rec.py, rec.pz);
-        rec.col.min.x = rec.px - 2.1; rec.col.max.x = rec.px + 2.1;
+        rec.col.min.x = rec.px - 1.35; rec.col.max.x = rec.px + 1.35;
         rec.col.min.y = rec.py;        rec.col.max.y = rec.py + 2.2;
-        rec.col.min.z = rec.pz - 3.3;  rec.col.max.z = rec.pz + 3.3;
+        rec.col.min.z = rec.pz - 3.05; rec.col.max.z = rec.pz + 3.05;
         for (const w of rec.spinW) w.rotation.x += dt * 8;
       }
       /* brake light refresh (NightFX re-tints on night change only) */
@@ -6976,8 +7476,12 @@ const WL_BUILDERS = {
         if (dx * dx + dz * dz < 11 && player.y < rec.py + 3.4 && player.y + player.h > rec.py) {
           rec.hitCd = 1.2;
           const hl = Math.hypot(dx, dz) || 1;
-          player.vx += dx / hl * 26; player.vz += dz / hl * 26;
-          player.vy = Math.max(player.vy, 22);
+          /* v27: launch along the driver's heading at the tunable angle */
+          const ang = clamp(+V.carYeetAngle || 35, 0, 80) * Math.PI / 180;
+          const hx = Math.sin(rec.grp.rotation.y), hz = Math.cos(rec.grp.rotation.y);
+          const p0 = (26 + clamp(+V.carYeet || 45, 5, 150) * 0.35) * Math.cos(ang);
+          player.vx += (hx * 0.6 + dx / hl * 0.4) * p0; player.vz += (hz * 0.6 + dz / hl * 0.4) * p0;
+          player.vy = Math.max(player.vy, clamp(p0 * Math.tan(ang), 10, 70));
           climbing = false;
           startYeet(60);
           wlToast('Move! Car coming through!', true);
@@ -7179,7 +7683,319 @@ const WL_BUILDERS = {
     rec.dispose = () => { scene.remove(m); colRef.enabled = false; };
   },
 
+  /* ================================================================
+     HOUSE — v27: the COLLAPSIBLE HOUSE (the finale target).
+     A blocky Roblox-style home assembled from BREAKABLE PANELS: a
+     panel-grid on all four walls (with an open doorway and glass
+     windows), a stepped (blocky!) gable on the ends and two roof
+     slopes. Drive a `vehicle` through it above `breakSpeed` and the
+     WHOLE house goes: a DEMOLITION WAVE ripples out from the impact,
+     nearest panels first, over ~1s — then every panel becomes a real
+     PHYS box body (§3.5) that tumbles, bounces, stacks and settles
+     into a PILE on the ground. Smite lightning does the same from its
+     strike point. The house rebuilds itself after `rebuild` seconds
+     (0 = one-shot — it stays demolished).
+
+     `size` is [width, wallHeight, depth]; `rot` (degrees) turns the
+     door: 0 = -z, 90 = -x, 180 = +z, 270 = +x. Colours: wall/roof/trim.
+     Multiplayer: every screen runs the smash against the cars it can
+     see — the driver's screen is exact, remote screens break the same
+     panels a beat later off the eased pose. */
+  house(rec, e, x, y, z) {
+    rec.kind = 'house';
+    const S = Array.isArray(e.size) && e.size.length === 3 ? e.size : [20, 4.6, 16];
+    const W = clamp(S[0], 8, 30), H = clamp(S[1], 3, 8), D = clamp(S[2], 8, 30);
+    const yaw = wlQuarter(e.rot) * Math.PI / 2;
+    const rebuild = wlNum(e.rebuild, 0, 600, 25);
+    const breakSpeed = wlNum(e.breakSpeed, 4, 70, 13);
+    const wallCol = wlIsHex(e.wall) ? wlHex(e.wall) : 0xe8e0d0;
+    const roofCol = wlIsHex(e.roof) ? wlHex(e.roof) : 0xc0392b;
+    const trimCol = wlIsHex(e.trim) ? wlHex(e.trim) : 0x8a6a44;
+    const roofH = clamp(H * 0.5, 1.4, 3.6);
+    const COLS = clamp(Math.round(W / 2.4), 3, 8);       // front/back panel columns
+    const SCOL = clamp(Math.round(D / 2.4), 3, 8);       // side panel columns
+    const ROWS = clamp(Math.round(H / 1.5), 2, 4);
+    const pw = W / COLS, ph = H / ROWS, pd = D / SCOL;
+    const TH = 0.34;                                      // wall thickness
+
+    const wallMat = studMats(wallCol, 0.8);
+    const roofMat = studMats(roofCol, 0.72);
+    const trimMat = studMats(trimCol, 0.8);
+    const glassM = new THREE.MeshStandardMaterial({ color: 0xbfe3f2, roughness: 0.1, transparent: true, opacity: 0.42 });
+    const doorW = Math.min(W * 0.42, 4.2), doorH = H * 0.72;
+    const grp = new THREE.Group();
+    grp.position.set(x, y, z);
+    grp.rotation.y = yaw;
+    scene.add(grp);
+    rec.grp = grp;
+    rec.smashed = false;
+    rec.rebuildT = 0;
+    rec.panels = [];
+    rec.smashQueued = [];
+
+    /* local → world (yaw about Y) */
+    const toWorld = (lx, lz) => ({
+      x: x + lx * Math.cos(yaw) + lz * Math.sin(yaw),
+      z: z - lx * Math.sin(yaw) + lz * Math.cos(yaw)
+    });
+    /* one breakable panel at local (lx,ly,lz) with local half-extents */
+    const addPanel = (lx, ly, lz, hw, hh, hd, mtl, isRoof, rotX) => {
+      const m = new THREE.Mesh(geo(hw * 2, hh * 2, hd * 2, 0, 0), mtl);
+      m.position.set(lx, ly, lz);
+      if (rotX) m.rotation.x = rotX;
+      m.castShadow = m.receiveShadow = true;
+      grp.add(m);
+      const p = { lx, ly, lz, hw, hh, hd, mtl, isRoof: !!isRoof, rotX: rotX || 0, mesh: m, col: null, down: false, body: null };
+      rec.panels.push(p);
+      return p;
+    };
+    /* wall-grid panels in the local frame */
+    const buildGrid = (axis, side, cols, span, cw, lz0) => {
+      for (let c = 0; c < cols; c++) {
+        const a = -span / 2 + (c + 0.5) * (span / cols);
+        for (let r = 0; r < ROWS; r++) {
+          const yy = (r + 0.5) * ph;
+          /* doorway: skip the front wall's bottom rows near the middle */
+          if (side < 0 && axis === 'z' && Math.abs(a) < doorW / 2 && yy < doorH) continue;
+          const isWin = (axis === 'x') && r === ROWS - 1 && (c === 0 || c === cols - 1);
+          const mtl = isWin ? glassM : (r === ROWS - 1 ? trimMat : wallMat);
+          if (axis === 'z') addPanel(a, yy, side * (D / 2 - TH / 2), cw / 2 - 0.05, ph / 2 - 0.05, TH / 2, mtl, false);
+          else              addPanel(side * (W / 2 - TH / 2), yy, a, TH / 2, ph / 2 - 0.05, cw / 2 - 0.05, mtl, false);
+        }
+      }
+    };
+    buildGrid('z', +1, COLS, W, pw, 0);        // back wall (+z)
+    buildGrid('z', -1, COLS, W, pw, 0);        // front wall (-z, with the doorway)
+    buildGrid('x', +1, SCOL, D, pd, 0);        // right wall
+    buildGrid('x', -1, SCOL, D, pd, 0);        // left wall
+    /* blocky stepped GABLE ends (they read as real Roblox roof steps) */
+    const GSTEPS = 4;
+    for (const sx of [-1, 1]) {
+      for (let g = 0; g < GSTEPS; g++) {
+        const yy = H + (g + 0.5) * (roofH / GSTEPS);
+        const w = D * (1 - (g + 0.5) / GSTEPS);
+        /* v27: tile the gable trim too — one 14 m bar was the single
+           biggest body in the house and destabilised the whole pile */
+        const nb = Math.max(1, Math.round(w / 2.4)), bw = w / nb;
+        for (let k = 0; k < nb; k++)
+          addPanel(sx * (W / 2 - TH / 2), yy, -w / 2 + (k + 0.5) * bw, TH / 2, (roofH / GSTEPS) / 2, bw / 2, trimMat, false);
+      }
+    }
+    /* two roof slopes (ridge along local X at z = 0). v27: each slope is
+       tiled into blocks — big thin slabs are unstable in the solver and
+       read as one flat sheet; tiles look like a real Roblox roof AND
+       tumble into a proper pile. */
+    const slopeL = Math.hypot(D / 2, roofH), ang = Math.atan2(roofH, D / 2);
+    const RTILES = clamp(Math.round(W / 2.6), 3, 8);
+    const RS = clamp(Math.round(slopeL / 3.0), 2, 4);        // segments down the slope
+    const rtw = W / RTILES, rsl = slopeL / RS;
+    for (const sz of [-1, 1]) {
+      for (let t = 0; t < RTILES; t++) for (let s = 0; s < RS; s++) {
+        /* centre of this tile in the slope's local frame: the slope runs
+           from the ridge (z=0, y=H+roofH) down to the eave (z=±D/2, y=H) */
+        const fr = (s + 0.5) / RS;                           // 0 at ridge → 1 at eave
+        const m = new THREE.Mesh(geo(rtw - 0.08, 0.42, rsl - 0.08, rtw, rsl), roofMat);
+        m.position.set(-W / 2 + (t + 0.5) * rtw, H + roofH * (1 - fr), sz * (D / 2) * fr);
+        m.rotation.x = sz > 0 ? ang : -ang;
+        m.castShadow = m.receiveShadow = true;
+        grp.add(m);
+        rec.panels.push({ lx: m.position.x, ly: m.position.y, lz: m.position.z, hw: rtw / 2, hh: 0.21, hd: rsl / 2, mtl: roofMat, isRoof: true, rotX: m.rotation.x, mesh: m, col: null, down: false, body: null });
+      }
+    }
+    /* a foundation slab so the house sits on the ground */
+    const found = new THREE.Mesh(geo(W + 0.5, 0.5, D + 0.5, W + 0.5, D + 0.5), studMats(trimCol, 0.85));
+    found.position.set(0, -0.25, 0);
+    found.receiveShadow = true;
+    grp.add(found);
+
+    /* ---- INTERIOR (v27): an upper floor, a partition, a chimney and
+       some crates. They are breakable too — and they give the pile real
+       VOLUME, so the house tumbles into a mound instead of a flat mat
+       of wall panels. ---- */
+    const floorY = H * 0.52;
+    const addSlab = (lx, ly, lz, w, h, d, mtl) => {
+      const m = new THREE.Mesh(geo(w, h, d, w, d), mtl);
+      m.position.set(lx, ly, lz);
+      m.castShadow = m.receiveShadow = true;
+      grp.add(m);
+      rec.panels.push({ lx, ly, lz, hw: w / 2, hh: h / 2, hd: d / 2, mtl, isRoof: false, rotX: 0, mesh: m, col: null, down: false, body: null });
+    };
+    /* v27: slabs are tiled into blocks. One giant floor/partition slab is
+       both a solver hazard (huge lever arms) and a flat sheet when it
+       lands; blocks read as Roblox bricks and stack into real rubble. */
+    const slabGrid = (cx, ly, cz, w, h, d, mtl, nx, nz) => {
+      const bw = w / nx, bd = d / nz;
+      for (let i = 0; i < nx; i++) for (let k = 0; k < nz; k++)
+        addSlab(cx - w / 2 + (i + 0.5) * bw, ly, cz - d / 2 + (k + 0.5) * bd, bw - 0.08, h, bd - 0.08, mtl);
+    };
+    const FW = W - 1.2, FD = D - 1.2;
+    slabGrid(0, floorY, 0, FW, 0.36, FD, studMats(0xd8cdb8, 0.85), Math.max(2, Math.round(FW / 2.6)), Math.max(2, Math.round(FD / 2.6)));   // upper floor
+    slabGrid(0, floorY + H * 0.24, -D / 4, W - 1.2, H * 0.48, 0.3, wallMat, Math.max(2, Math.round((W - 1.2) / 2.6)), 1);                     // partition wall
+    /* chimney on a corner (a stack reads as tall debris) */
+    for (let s = 0; s < 3; s++) addSlab(W / 2 + 0.8, H + roofH * 0.4 + s * 1.0, D / 2 - 1.6, 1.4, 1.0, 1.4, studMats(0x7d6b5a, 0.9));
+    /* crates + a table (small, heavy, land on top of the wall pile) */
+    addSlab(-W / 4, 0.9, D / 4, 1.6, 1.6, 1.6, studMats(0xa9722f, 0.85));
+    addSlab(W / 4 - 1, 1.1, -D / 4, 2.6, 0.35, 1.6, studMats(0x9c6b3f, 0.8));
+
+    /* ---- colliders + world-space panel boxes (for the smash test) ---- */
+    rec.boxes = [];
+    const syncColliders = () => {
+      for (const p of rec.panels) {
+        if (p.down) continue;
+        const w2 = toWorld(p.lx, p.lz);
+        const hx = p.hw, hz = p.hd, hy = p.hh;
+        /* rotated AABB extents (roof panels tilt in z-y; approximate) */
+        const cs = Math.abs(Math.cos(yaw)), sn = Math.abs(Math.sin(yaw));
+        const ex = hx * cs + hz * sn, ez = hx * sn + hz * cs;
+        p.col = World.addBox(w2.x, y + p.ly, w2.z, ex * 2, hy * 2, ez * 2);
+      }
+    };
+    syncColliders();
+    /* world footprint box + panel world centres, rebuilt whenever intact */
+    const syncBoxes = () => {
+      rec.boxes.length = 0;
+      for (const p of rec.panels) {
+        if (p.down) continue;
+        const w2 = toWorld(p.lx, p.lz);
+        const cs = Math.abs(Math.cos(yaw)), sn = Math.abs(Math.sin(yaw));
+        const ex = p.hw * cs + p.hd * sn, ez = p.hw * sn + p.hd * cs;
+        rec.boxes.push({ x: w2.x, y: y + p.ly, z: w2.z, ex, ey: p.hh, ez });
+      }
+    };
+    syncBoxes();
+    rec.footprint = { x, z, r: (Math.max(W, D) / 2) + 2.2 };
+
+    /* ---- smash: the whole house goes, nearest panels first ---- */
+    const spawnBody = (p, ix, iz, dirX, dirZ) => {
+      const w2 = toWorld(p.lx, p.lz);
+      const dx = w2.x - ix, dz = w2.z - iz;
+      const dl = Math.hypot(dx, dz) || 1;
+      /* enough spread to read as a demolition, gentle enough that the
+         panels actually LAND and pile up (a huge shove just skitters
+         the whole house across the map) */
+      const outward = 1.2 + Math.random() * 1.7;
+      const up = p.isRoof ? 0.8 + Math.random() * 1.1 : 2.2 + Math.random() * 2.4;
+      rec.bodies = rec.bodies || [];
+      const b = PHYS.add({
+        x: w2.x, y: y + p.ly, z: w2.z,
+        hx: p.hw, hy: p.hh, hz: p.hd,
+        rx: p.rotX || 0, ry: yaw, rz: (Math.random() - 0.5) * 0.5,
+        vx: dx / dl * outward + dirX * (2.2 + Math.random() * 2.2),
+        vz: dz / dl * outward + dirZ * (2.2 + Math.random() * 2.2),
+        vy: up,
+        wx: (Math.random() - 0.5) * 5, wy: (Math.random() - 0.5) * 5, wz: (Math.random() - 0.5) * 5,
+        color: p.mtl === roofMat ? roofCol : (p.mtl === glassM ? 0xbfe3f2 : (p.mtl === trimMat ? trimCol : wallCol)),
+        mat: null, tag: 'house', life: rebuild > 0 ? Math.max(6, rebuild - 1) : 26
+      });
+      p.body = b;
+      rec.bodies.push(b);
+    };
+    const breakPanel = (p, ix, iz, dirX, dirZ) => {
+      if (p.down) return;
+      p.down = true;
+      grp.remove(p.mesh);
+      if (p.col) { p.col.enabled = false; }
+      spawnBody(p, ix, iz, dirX, dirZ);
+      const w2 = toWorld(p.lx, p.lz);
+      if (Math.random() < 0.34) spawnDust(w2.x, y + p.ly, w2.z, 2, 0.7, p.mtl === roofMat ? roofCol : 0xcfc6b4, 4);
+    };
+    rec.smash = (ix, iz, dirX, dirZ) => {
+      if (rec.smashed) return;
+      rec.smashed = true;
+      rec.rebuildT = rebuild > 0 ? rebuild : 0;
+      const total = rec.panels.length;
+      rec.panels.forEach(p => {
+        const w2 = toWorld(p.lx, p.lz);
+        const d = Math.hypot(w2.x - ix, w2.z - iz);
+        rec.smashQueued.push({ p, at: elapsed + d * 0.07 + Math.random() * 0.06, ix, iz, dirX, dirZ });
+      });
+      /* a shockwave that hurls any rubble already lying around */
+      PHYS.blast(ix, y + 1, iz, Math.max(W, D) * 0.8, 9);
+      spawnDust(ix, y + 1.5, iz, 16, 3.2, 0xcfc6b4, 7);
+      adminBanner('HOUSE DEMOLISHED!');
+      rec.totalPanels = total;
+    };
+    rec.rebuildHouse = () => {
+      /* wipe any leftover rubble from this house, then pop the panels back */
+      if (rec.bodies) for (const b of rec.bodies) if (!b.dead) b.dead = true;
+      rec.bodies = [];
+      for (const p of rec.panels) {
+        if (!p.down) continue;
+        p.down = false;
+        p.body = null;
+        const m = new THREE.Mesh(geo(p.hw * 2, p.hh * 2, p.hd * 2, 0, 0), p.mtl);
+        m.position.set(p.lx, p.ly, p.lz);
+        if (p.rotX) m.rotation.x = p.rotX;
+        m.castShadow = m.receiveShadow = true;
+        m.scale.setScalar(0.01);
+        grp.add(m);
+        p.mesh = m;
+        p.reveal = 0;
+      }
+      rec.smashed = false;
+      rec.smashQueued.length = 0;
+      syncColliders();
+      syncBoxes();
+      spawnFlash(x, y + 3, z, 2.4);
+      adminBanner('The house rebuilt itself — go again!');
+    };
+
+    /* ---- tick: demolition wave + rebuild + reveal pop ---- */
+    rec.tick = dt => {
+      /* pop-in reveal for rebuilt panels */
+      for (const p of rec.panels) {
+        if (p.reveal == null) continue;
+        p.reveal += dt;
+        const k = Math.min(1, p.reveal / 0.35);
+        p.mesh.scale.setScalar(Math.max(0.01, easeOut(k)));
+        if (k >= 1) { p.mesh.scale.setScalar(1); p.reveal = null; }
+      }
+      if (rec.smashed) {
+        for (let i = rec.smashQueued.length - 1; i >= 0; i--) {
+          const q = rec.smashQueued[i];
+          if (elapsed >= q.at) { breakPanel(q.p, q.ix, q.iz, q.dirX, q.dirZ); rec.smashQueued.splice(i, 1); }
+        }
+        if (rec.rebuildT > 0) {
+          rec.rebuildT -= dt;
+          if (rec.rebuildT <= 0 && !rec.smashQueued.length) rec.rebuildHouse();
+        }
+        return;
+      }
+      /* ---- did a fast vehicle plough into me? ---- */
+      for (const v of GameLogic.entities) {
+        if (v.kind !== 'vehicle' || !v.grp) continue;
+        let spd = 0, vx = 0, vz = 0;
+        if (VEH.riding === v) { spd = Math.abs(v.speed); vx = Math.sin(v.grp.rotation.y); vz = Math.cos(v.grp.rotation.y); }
+        else if (v.net) {
+          /* remote car: estimate speed + heading from the eased pose */
+          const dxn = v.px - (v._lx != null ? v._lx : v.px), dzn = v.pz - (v._lz != null ? v._lz : v.pz);
+          spd = Math.hypot(dxn, dzn) / Math.max(1e-3, dt);
+          if (spd > 0.4) { vx = dxn / (spd * dt); vz = dzn / (spd * dt); }
+          else { vx = Math.sin(v.grp.rotation.y); vz = Math.cos(v.grp.rotation.y); }
+        } else continue;
+        v._lx = v.px; v._lz = v.pz;
+        if (spd < breakSpeed) continue;
+        const hx = v.px - x, hz = v.pz - z;
+        if (hx * hx + hz * hz > (rec.footprint.r + 3.2) * (rec.footprint.r + 3.2)) continue;
+        if (v.py + 2.6 < y || v.py > y + H + roofH + 1) continue;
+        const hl = Math.hypot(vx, vz) || 1;
+        rec.smash(v.px, v.pz, vx / hl, vz / hl);
+        break;
+      }
+    };
+    rec.setGate = ok => { grp.visible = ok; for (const p of rec.panels) if (p.col) p.col.enabled = ok && !p.down; };
+    rec.dispose = () => {
+      for (const p of rec.panels) if (p.col) p.col.enabled = false;
+      if (rec.bodies) for (const b of rec.bodies) b.dead = true;
+      scene.remove(grp);
+      const i = HOUSES.indexOf(rec);
+      if (i >= 0) HOUSES.splice(i, 1);
+    };
+    HOUSES.push(rec);
+  },
+
 };
+
 let GL_DROP_SEQ = 1, GL_ZSEQ = 1;
 
 /* spawn the visual mesh for a drop (gold cube by default) */
@@ -9269,6 +10085,11 @@ WS.on('smite', (d, from) => {
   const sp = !!d.sp, rd = clamp(+d.rd || 8, 1, 60);
   spawnLightning(x, y, z);
   spawnExplosionFX(x, y + 1.2, z, sz);
+  /* v27: the shockwave also collapses nearby houses (and hurls any
+     rubble already lying around) */
+  const smashed = smashHousesNear(x, z, rd + sz * 1.5, pw, sz);
+  PHYS.blast(x, y + 1, z, rd + sz * 1.5, clamp(pw * 0.08, 3, 22));
+  if (smashed) adminBanner('HOUSE DEMOLISHED!');
   if (d.id === MP.id) {                            // the bolt found ME
     /* v22: fly AWAY from where the bolt landed. A dead-center hit
        (you stood still) picks a random compass — but a bolt that
@@ -9800,6 +10621,7 @@ function loop() {
     tickWeapon(dt);                                   // v14: ammo / reload / auto fire
     updateFX(dt);                                     // tracers / flashes
     Water.tick(dt);                                   // v19: ripples, splashes, underwater tint
+    PHYS.tick(dt);                                    // v27: the rigid-body pile (house rubble)
 
     if (swingT >= 0) {
       swingT += dt;
@@ -10021,6 +10843,7 @@ function setVal(key, val) {
     case 'graphicsLevel': case 'resMode': case 'resScale': case 'shadowQuality': case 'shadowDistance': case 'fogDistance':
       applyGraphics(); break;
     case 'dayTime': case 'daySpeed': daySync(); break;   // world event — the sky follows on every screen (§12.6)
+    case 'lampBright': LAMP._night = -1; break;          // v27: force the lamp kits to re-tint next tick
   }
   syncConsts();
   /* room rules (v10): every admin edit rides out to the whole room and
@@ -10466,6 +11289,25 @@ function adminEngineCommands() {
   if (GL.active) out.push({ id: 'resetworld', cat: 'Everywhere', label: 'Reset world progress', danger: true,
     desc: 'Every claimed plot, bought button and toggle resets to day one for everyone. Money is kept.', args: [], quick: [],
     run: () => { WS.act('tyc', { t: 'r' }); return 'World progress reset.'; } });
+  /* v27: CONTEXTUAL commands — only offered where they make sense.
+     "Teleport to the end of the obby" appears in worlds that have
+     checkpoints; the lamp-brightness command appears where lamps do. */
+  const cps = GL.entities.filter(r => r.kind === 'checkpoint');
+  if (cps.length) out.push({ id: 'obbyend', cat: 'Teleport', label: 'Teleport to end of obby',
+    desc: 'Jump straight to the FINISH — the last checkpoint in this world.', args: [], quick: [],
+    run: () => {
+      const last = cps[cps.length - 1];
+      if (!last) return 'No checkpoints here.';
+      player.x = last.x; player.y = last.y + 0.6; player.z = last.z;
+      player.vx = player.vy = player.vz = 0; climbing = false;
+      if (GL.active) GL.checkpoint = last;                 // so a fall sends you back to the finish
+      spawnFlash(player.x, player.y + 2, player.z, 1.6);
+      return 'Teleported to the end of the obby.';
+    } });
+  if (LAMP.list.length) out.push({ id: 'lampbright', cat: 'Lighting', label: 'Street lamp brightness',
+    desc: 'How bright the lamps burn at night \u2014 a room rule for everyone here.', args: [{ n: 'level', t: 'num', d: 1, min: 0.2, max: 3 }],
+    quick: [['Dim 0.6', { level: 0.6 }], ['Normal 1', { level: 1 }], ['Bright 1.6', { level: 1.6 }], ['Blazing 2.4', { level: 2.4 }]],
+    run: a => { const v = clamp(+a.level || 1, 0.2, 3); setVal('lampBright', v); return 'Street lamps: ' + v.toFixed(2) + '\u00d7 brightness for everyone.'; } });
   return out;
 }
 function buildAdminWorld(p) {
@@ -10988,7 +11830,10 @@ function buildAdminTab() {
   sect(wp, 'NPC Cars (worlds with traffic)');   // v21
   wp.append(bindSlider('carSpeed', 'Car Speed', [0.25, 2.5, 0.05], v => (+v).toFixed(2) + '× traffic'));
   wp.append(bindSlider('carYeet', 'Car Yeet Power', [5, 150, 5]));
+  wp.append(bindSlider('carYeetAngle', 'Car Yeet Angle', [0, 80, 1], v => Math.round(v) + '\u00b0'));   // v27
   wp.append(bindSlider('carDamage', 'Car Hit Damage', [1, 200, 1]));
+  sect(wp, 'Street Lamps (worlds with lamps)');   // v27
+  wp.append(bindSlider('lampBright', 'Lamp Brightness', [0.2, 3, 0.05], v => (+v).toFixed(2) + '×'));
   sect(wp, 'Camera Zoom (everyone)');
   wp.append(bindSlider('zoomMin', 'Zoom Minimum', [1, 12, 0.5]));
   wp.append(bindSlider('zoomMax', 'Zoom Out Limit', [10, 60, 1]));
@@ -11166,7 +12011,8 @@ updateDayNight(0);
 window.BASEPLATE = {
   V, cam, MGR, SWING, Interactables, MP, WS,
   Worlds, GLOBAL, WORLDS_SPAWN, World, switchWorld, renderWorldsTab,
-  debug: { scene, camera, character, fpTool, fpCam, fpScene },   // console tinkering / automated tests
+  GameLogic, PHYS, HOUSES, VEH, LAMP,     // v27: house smash + rubble + lamp debugging
+  debug: { scene, camera, character, fpTool, fpCam, fpScene, adminEngineCommands, openMenu, buildAdminTab, get isAdmin(){return isAdmin;} },   // console tinkering / automated tests
   get player() { return player; },
   get climbing() { return climbing; },
   get seated() { return seated; },
